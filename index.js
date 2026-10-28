@@ -42,16 +42,19 @@ function broadcastState() {
     });
 }
 
-// Надежная функция управления каналами реле через явное задание state ('on'/'off')
-async function handleChannelToggle(channel, currentState, stateKey) {
+// Функция управления многоканальным реле через массив switches
+async function handleChannelToggle(channelNumber, currentState, stateKey) {
     try {
         const connection = new ewelink({ email: login, password: pass, region: region });
         const newState = currentState ? 'off' : 'on';
         
-        console.log(`[eWeLink] Setting device ${switchId} channel ${channel} to ${newState}`);
+        console.log(`[eWeLink] Setting device ${switchId} outlet ${channelNumber} to ${newState}`);
         
-        // Явно отправляем команду 'on' или 'off' на конкретный канал (outlet)
-        await connection.setDevicePowerState(switchId, newState, { outlet: channel });
+        // Большинство многоканальных реле Sonoff управляются через массив switches с индексацией от 0
+        // channelNumber 1 -> outlet 0, channelNumber 2 -> outlet 1, и т.д.
+        const targetOutlet = channelNumber - 1;
+
+        await connection.setDevicePowerState(switchId, newState, { outlet: targetOutlet });
 
         systemState[stateKey] = !currentState;
         broadcastState();
