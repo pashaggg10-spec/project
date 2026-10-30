@@ -3,7 +3,7 @@ const http = require('http');
 const { WebSocketServer } = require('ws');
 const path = require('path');
 const ewelink = require('ewelink-api');
-
+const Stream = require('node-rtsp-stream');
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
@@ -21,6 +21,16 @@ const rgbDeviceId = '100123e422'; // RGB лента
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
+
+const rtspStream = new Stream({
+    name: 'fibaro',
+    streamUrl: 'rtsp://admin:admin@192.168.15.144:554/live/mpeg4',
+    wsPort: 9999,
+    ffmpegOptions: {
+        '-stats': '',
+        '-r': 30
+    }
+});
 
 let systemState = {
     temperature: 24.5,
