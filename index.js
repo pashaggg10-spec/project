@@ -24,7 +24,7 @@ app.use(express.json());
 
 const rtspStream = new Stream({
     name: 'fibaro',
-    streamUrl: 'rtsp://admin:admin@192.168.15.206/live/mpeg4',
+    streamUrl: 'rtsp://admin:admin@192.168.15.206:554/live/mpeg4',
     wsPort: 9999,
     ffmpegOptions: {
         '-stats': '',
