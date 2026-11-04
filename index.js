@@ -26,6 +26,7 @@ let systemState = {
     temperature: 24.5,
     motion: false,
     smoke: false,
+    door: false, // Статус датчика открытия двери (DW2-WIFI)
     lamp1: false,
     lamp2: false,
     fan: false,
@@ -111,6 +112,9 @@ wss.on('connection', (ws) => {
                     systemState.smoke = false;
                     broadcastState();
                 }, 5000);
+            } else if (parsed.action === 'TRIGGER_DOOR') {
+                systemState.door = !systemState.door; // Переключение состояния дверей по клику
+                broadcastState();
             }
         } catch (e) {
             console.error('[Server] Error handling message:', e);
