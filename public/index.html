@@ -10,7 +10,7 @@
             --card-bg: #1e293b;
             --accent-blue: #38bdf8;
             --accent-green: #22c55e;
-            --accent-red: #ff3333; /* Сделали красный цвет еще ярче */
+            --accent-red: #ff3333;
             --text-main: #f8fafc;
             --text-sub: #94a3b8;
         }
@@ -96,6 +96,12 @@
             font-weight: 700;
         }
 
+        .card-subtext {
+            font-size: 0.8rem;
+            color: var(--text-sub);
+            margin-top: 6px;
+        }
+
         .card-btn {
             cursor: pointer;
         }
@@ -107,13 +113,24 @@
         .card-btn.active {
             border-color: var(--accent-blue);
             background-color: #1e3a8a;
-            box-shadow: 0 0 12px rgba(56, 189, 248, 0.4); /* Добавили яркое свечение для включенных кнопок */
+            box-shadow: 0 0 12px rgba(56, 189, 248, 0.4);
         }
 
-        /* Более яркая подсветка тревожных датчиков */
+        .card-lock {
+            cursor: pointer;
+        }
+        .card-lock.unlocked {
+            border-color: var(--accent-red);
+            background-color: rgba(239, 68, 68, 0.2);
+        }
+        .card-lock.locked {
+            border-color: var(--accent-green);
+            background-color: rgba(34, 197, 94, 0.15);
+        }
+
         .card-motion.detected, .card-smoke.danger, .card-door.open {
             border-color: var(--accent-red);
-            background-color: rgba(239, 68, 68, 0.25); /* Сделали фон ярче */
+            background-color: rgba(239, 68, 68, 0.25);
             animation: pulse 1.2s infinite;
         }
 
@@ -183,6 +200,16 @@
             <div class="card-value" id="val-temp">-- °C</div>
         </div>
 
+        <!-- Умный замок -->
+        <div class="card card-lock locked" id="card-lock" onclick="sendCommand('TOGGLE_LOCK')">
+            <div class="card-header">
+                <span class="card-title">Smart Lock</span>
+                <span id="lock-icon">🔒</span>
+            </div>
+            <div class="card-value" id="val-lock">Locked</div>
+            <div class="card-subtext" id="val-battery">Battery: 85%</div>
+        </div>
+
         <!-- Движение -->
         <div class="card card-motion" id="card-motion" onclick="triggerMotionSimulation()">
             <div class="card-header">
@@ -201,7 +228,7 @@
             <div class="card-value" id="val-smoke">Normal</div>
         </div>
 
-        <!-- Датчик двери (DW2-WIFI) -->
+        <!-- Датчик двери -->
         <div class="card card-door" id="card-door" onclick="triggerDoorSimulation()">
             <div class="card-header">
                 <span class="card-title">Door Sensor</span>
@@ -257,7 +284,7 @@
     </div>
 
     <div class="log-container" id="log-window">
-        [System Initialization] Ready with upgraded interface...
+        [System Initialization] Ready with Smart Lock support...
     </div>
 
     <script>
@@ -300,6 +327,25 @@
         function updateUI(state) {
             document.getElementById('val-temp').innerText = `${state.temperature} °C`;
 
+            // Умный замок
+            const lockCard = document.getElementById('card-lock');
+            const lockVal = document.getElementById('val-lock');
+            const lockIcon = document.getElementById('lock-icon');
+            const batteryVal = document.getElementById('val-battery');
+            
+            if (state.lock) {
+                lockCard.classList.remove('locked');
+                lockCard.classList.add('unlocked');
+                lockVal.innerText = "Unlocked";
+                lockIcon.innerText = "🔓";
+            } else {
+                lockCard.classList.remove('unlocked');
+                lockCard.classList.add('locked');
+                lockVal.innerText = "Locked";
+                lockIcon.innerText = "🔒";
+            }
+            batteryVal.innerText = `Battery: ${state.battery}%`;
+
             // Движение
             const motionCard = document.getElementById('card-motion');
             const motionVal = document.getElementById('val-motion');
@@ -322,7 +368,7 @@
                 smokeVal.innerText = "Normal";
             }
 
-            // Дверь (DW2-WIFI)
+            // Дверь
             const doorCard = document.getElementById('card-door');
             const doorVal = document.getElementById('val-door');
             if (state.door) {
