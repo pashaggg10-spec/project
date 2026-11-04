@@ -10,7 +10,7 @@
             --card-bg: #1e293b;
             --accent-blue: #38bdf8;
             --accent-green: #22c55e;
-            --accent-red: #ef4444;
+            --accent-red: #ff3333; /* Сделали красный цвет еще ярче */
             --text-main: #f8fafc;
             --text-sub: #94a3b8;
         }
@@ -55,8 +55,9 @@
         }
 
         .status-badge.online {
-            background-color: rgba(34, 197, 94, 0.2);
-            color: var(--accent-green);
+            background-color: rgba(34, 197, 94, 0.3);
+            color: #4ade80;
+            font-weight: 600;
         }
 
         .dashboard-grid {
@@ -106,31 +107,26 @@
         .card-btn.active {
             border-color: var(--accent-blue);
             background-color: #1e3a8a;
+            box-shadow: 0 0 12px rgba(56, 189, 248, 0.4); /* Добавили яркое свечение для включенных кнопок */
         }
 
-        .card-motion.detected {
+        /* Более яркая подсветка тревожных датчиков */
+        .card-motion.detected, .card-smoke.danger, .card-door.open {
             border-color: var(--accent-red);
-            background-color: rgba(239, 68, 68, 0.15);
-            animation: pulse 1.5s infinite;
+            background-color: rgba(239, 68, 68, 0.25); /* Сделали фон ярче */
+            animation: pulse 1.2s infinite;
         }
 
-        /* Стиль для тревоги датчика дыма */
-        .card-smoke {
+        .card-door, .card-smoke, .card-motion {
             cursor: pointer;
-        }
-        .card-smoke.danger {
-            border-color: var(--accent-red);
-            background-color: rgba(239, 68, 68, 0.15);
-            animation: pulse 1.5s infinite;
         }
 
         @keyframes pulse {
-            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
-            70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.6); }
+            70% { box-shadow: 0 0 0 14px rgba(239, 68, 68, 0); }
             100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
         }
 
-        /* Элемент выбора цвета */
         .color-picker-wrapper {
             display: flex;
             align-items: center;
@@ -196,13 +192,22 @@
             <div class="card-value" id="val-motion">No Motion</div>
         </div>
 
-        <!-- Датчик дыма (Zigbee) -->
+        <!-- Датчик дыма -->
         <div class="card card-smoke" id="card-smoke" onclick="triggerSmokeSimulation()">
             <div class="card-header">
                 <span class="card-title">Smoke Sensor</span>
                 <span>🧯</span>
             </div>
             <div class="card-value" id="val-smoke">Normal</div>
+        </div>
+
+        <!-- Датчик двери (DW2-WIFI) -->
+        <div class="card card-door" id="card-door" onclick="triggerDoorSimulation()">
+            <div class="card-header">
+                <span class="card-title">Door Sensor</span>
+                <span>🚪</span>
+            </div>
+            <div class="card-value" id="val-door">Closed</div>
         </div>
 
         <!-- Лампа 1 -->
@@ -232,7 +237,7 @@
             <div class="card-value" id="val-fan">OFF</div>
         </div>
 
-        <!-- RGB Подсветка стенда -->
+        <!-- RGB Подсветка -->
         <div class="card card-btn" id="card-rgb">
             <div class="card-header" onclick="sendCommand('TOGGLE_RGB')">
                 <span class="card-title">RGB Backlight</span>
@@ -252,7 +257,7 @@
     </div>
 
     <div class="log-container" id="log-window">
-        [System Initialization] Ready with RGB support...
+        [System Initialization] Ready with upgraded interface...
     </div>
 
     <script>
@@ -295,6 +300,7 @@
         function updateUI(state) {
             document.getElementById('val-temp').innerText = `${state.temperature} °C`;
 
+            // Движение
             const motionCard = document.getElementById('card-motion');
             const motionVal = document.getElementById('val-motion');
             if (state.motion) {
@@ -305,7 +311,7 @@
                 motionVal.innerText = "No Motion";
             }
 
-            // Обновление состояния датчика дыма
+            // Дым
             const smokeCard = document.getElementById('card-smoke');
             const smokeVal = document.getElementById('val-smoke');
             if (state.smoke) {
@@ -316,11 +322,21 @@
                 smokeVal.innerText = "Normal";
             }
 
+            // Дверь (DW2-WIFI)
+            const doorCard = document.getElementById('card-door');
+            const doorVal = document.getElementById('val-door');
+            if (state.door) {
+                doorCard.classList.add('open');
+                doorVal.innerText = "Open";
+            } else {
+                doorCard.classList.remove('open');
+                doorVal.innerText = "Closed";
+            }
+
             updateDeviceBtn('btn-lamp1', 'val-lamp1', state.lamp1);
             updateDeviceBtn('btn-lamp2', 'val-lamp2', state.lamp2);
             updateDeviceBtn('btn-fan', 'val-fan', state.fan);
 
-            // Обновление состояния RGB карточки
             updateDeviceBtn('card-rgb', 'val-rgb', state.rgbPower);
             document.getElementById('colorPicker').value = state.rgbColor;
         }
@@ -358,6 +374,10 @@
 
         function triggerSmokeSimulation() {
             sendCommand('TRIGGER_SMOKE');
+        }
+
+        function triggerDoorSimulation() {
+            sendCommand('TRIGGER_DOOR');
         }
 
         connectWS();
