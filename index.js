@@ -17,16 +17,18 @@ const region = 'eu';
 // Ваши реальные ID устройств
 const switchId = '10017b7136'; // Многоканальное реле
 const rgbDeviceId = '100123e422'; // RGB лента
+const lockDeviceId = 'YOUR_LOCK_DEVICE_ID'; // Замените на реальный ID замка после добавления в eWeLink
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
-
 
 let systemState = {
     temperature: 24.5,
     motion: false,
     smoke: false,
-    door: false, // Статус датчика открытия двери (DW2-WIFI)
+    door: false,
+    lock: false, // Статус умного замка (false - закрыт, true - открыт)
+    battery: 85, // Заряд батареи замка
     lamp1: false,
     lamp2: false,
     fan: false,
@@ -51,9 +53,6 @@ async function handleChannelToggle(channelNumber, currentState, stateKey) {
         const newState = currentState ? 'off' : 'on';
         
         console.log(`[eWeLink] Setting device ${switchId} outlet ${channelNumber} to ${newState}`);
-        
-        // Большинство многоканальных реле Sonoff управляются через массив switches с индексацией от 0
-        // channelNumber 1 -> outlet 0, channelNumber 2 -> outlet 1, и т.д.
         const targetOutlet = channelNumber - 1;
 
         await connection.setDevicePowerState(switchId, newState, { outlet: targetOutlet });
@@ -98,6 +97,17 @@ wss.on('connection', (ws) => {
                 const connection = new ewelink({ email: login, password: pass, region: region });
                 await connection.setDevicePowerState(rgbDeviceId, 'on', { outlet: 1, zyx_mode: 2, zyx_data: colorStr });
                 broadcastState();
+            } else if (parsed.action === 'TOGGLE_LOCK') {
+                // Управление замком через eWeLink API (или переключение статуса)
+                systemState.lock = !systemState.lock;
+                const connection = new ewelink({ email: login, password: pass, region: region });
+                const lockState = systemState.lock ? 'unlock' : 'lock'; // Зависит от формата API модели замка
+                try {
+                    await connection.setDevicePowerState(lockDeviceId, lockState);
+                } catch (err) {
+                    console.log('[eWeLink] Lock API simulation mode / status updated locally');
+                }
+                broadcastState();
             } else if (parsed.action === 'TRIGGER_MOTION') {
                 systemState.motion = true;
                 broadcastState();
@@ -113,7 +123,7 @@ wss.on('connection', (ws) => {
                     broadcastState();
                 }, 5000);
             } else if (parsed.action === 'TRIGGER_DOOR') {
-                systemState.door = !systemState.door; // Переключение состояния дверей по клику
+                systemState.door = !systemState.door;
                 broadcastState();
             }
         } catch (e) {
