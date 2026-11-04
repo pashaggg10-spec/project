@@ -25,6 +25,7 @@ app.use(express.json());
 let systemState = {
     temperature: 24.5,
     motion: false,
+    smoke: false,
     lamp1: false,
     lamp2: false,
     fan: false,
@@ -103,6 +104,13 @@ wss.on('connection', (ws) => {
                     systemState.motion = false;
                     broadcastState();
                 }, 4000);
+            } else if (parsed.action === 'TRIGGER_SMOKE') {
+                systemState.smoke = true;
+                broadcastState();
+                setTimeout(() => {
+                    systemState.smoke = false;
+                    broadcastState();
+                }, 5000);
             }
         } catch (e) {
             console.error('[Server] Error handling message:', e);
