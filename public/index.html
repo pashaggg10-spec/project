@@ -114,6 +114,16 @@
             animation: pulse 1.5s infinite;
         }
 
+        /* Стиль для тревоги датчика дыма */
+        .card-smoke {
+            cursor: pointer;
+        }
+        .card-smoke.danger {
+            border-color: var(--accent-red);
+            background-color: rgba(239, 68, 68, 0.15);
+            animation: pulse 1.5s infinite;
+        }
+
         @keyframes pulse {
             0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
             70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
@@ -185,8 +195,9 @@
             </div>
             <div class="card-value" id="val-motion">No Motion</div>
         </div>
+
         <!-- Датчик дыма (Zigbee) -->
-        <div class="card card-smoke" id="card-smoke">
+        <div class="card card-smoke" id="card-smoke" onclick="triggerSmokeSimulation()">
             <div class="card-header">
                 <span class="card-title">Smoke Sensor</span>
                 <span>🧯</span>
@@ -294,6 +305,17 @@
                 motionVal.innerText = "No Motion";
             }
 
+            // Обновление состояния датчика дыма
+            const smokeCard = document.getElementById('card-smoke');
+            const smokeVal = document.getElementById('val-smoke');
+            if (state.smoke) {
+                smokeCard.classList.add('danger');
+                smokeVal.innerText = "Smoke Detected!";
+            } else {
+                smokeCard.classList.remove('danger');
+                smokeVal.innerText = "Normal";
+            }
+
             updateDeviceBtn('btn-lamp1', 'val-lamp1', state.lamp1);
             updateDeviceBtn('btn-lamp2', 'val-lamp2', state.lamp2);
             updateDeviceBtn('btn-fan', 'val-fan', state.fan);
@@ -332,6 +354,10 @@
 
         function triggerMotionSimulation() {
             sendCommand('TRIGGER_MOTION');
+        }
+
+        function triggerSmokeSimulation() {
+            sendCommand('TRIGGER_SMOKE');
         }
 
         connectWS();
