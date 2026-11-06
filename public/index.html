@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#0f172a">
     <title>IoT Pi 4 Dashboard</title>
     <style>
         :root {
@@ -11,6 +12,7 @@
             --accent-blue: #38bdf8;
             --accent-green: #22c55e;
             --accent-red: #ff3333;
+            --accent-amber: #f59e0b;
             --text-main: #f8fafc;
             --text-sub: #94a3b8;
         }
@@ -33,17 +35,24 @@
             min-height: 100vh;
         }
 
+        /* ---------- Header ---------- */
         header {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            gap: 12px;
             padding-bottom: 12px;
             border-bottom: 1px solid #334155;
+            flex-wrap: wrap;
         }
 
-        h1 {
-            font-size: 1.5rem;
-            font-weight: 600;
+        h1 { font-size: 1.4rem; font-weight: 600; }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
         }
 
         .status-badge {
@@ -52,6 +61,7 @@
             border-radius: 20px;
             background-color: #334155;
             color: var(--text-sub);
+            white-space: nowrap;
         }
 
         .status-badge.online {
@@ -60,9 +70,28 @@
             font-weight: 600;
         }
 
+        .status-badge.offline {
+            background-color: rgba(239, 68, 68, 0.3);
+            color: #f87171;
+        }
+
+        .danger-btn {
+            background: #dc2626;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            padding: 8px 16px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .danger-btn:hover { background: #b91c1c; }
+        .danger-btn:active { transform: scale(0.97); }
+
+        /* ---------- Dashboard ---------- */
         .dashboard-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
             gap: 16px;
         }
 
@@ -74,7 +103,7 @@
             flex-direction: column;
             justify-content: space-between;
             border: 2px solid transparent;
-            transition: all 0.2s ease;
+            transition: border-color 0.2s, background 0.2s, transform 0.15s;
             box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
         }
 
@@ -94,6 +123,7 @@
         .card-value {
             font-size: 1.8rem;
             font-weight: 700;
+            transition: color 0.2s;
         }
 
         .card-subtext {
@@ -102,12 +132,36 @@
             margin-top: 6px;
         }
 
-        .card-btn {
+        .card-subtext.low {
+            color: #f87171;
+            font-weight: 700;
+        }
+
+        .card-btn,
+        .card-lock,
+        .card-door,
+        .card-smoke,
+        .card-motion {
             cursor: pointer;
         }
 
-        .card-btn:active {
+        .card-btn:active,
+        .card-lock:active,
+        .card-door:active,
+        .card-smoke:active,
+        .card-motion:active {
             transform: scale(0.97);
+        }
+
+        @media (hover: hover) {
+            .card-btn:hover,
+            .card-lock:hover,
+            .card-door:hover,
+            .card-smoke:hover,
+            .card-motion:hover {
+                border-color: #475569;
+                transform: translateY(-2px);
+            }
         }
 
         .card-btn.active {
@@ -115,10 +169,8 @@
             background-color: #1e3a8a;
             box-shadow: 0 0 12px rgba(56, 189, 248, 0.4);
         }
+        .card-btn.active .card-value { color: var(--accent-blue); }
 
-        .card-lock {
-            cursor: pointer;
-        }
         .card-lock.unlocked {
             border-color: var(--accent-red);
             background-color: rgba(239, 68, 68, 0.2);
@@ -128,22 +180,23 @@
             background-color: rgba(34, 197, 94, 0.15);
         }
 
-        .card-motion.detected, .card-smoke.danger, .card-door.open {
+        .card-motion.detected,
+        .card-smoke.danger,
+        .card-door.open {
             border-color: var(--accent-red);
             background-color: rgba(239, 68, 68, 0.25);
             animation: pulse 1.2s infinite;
         }
 
-        .card-door, .card-smoke, .card-motion {
-            cursor: pointer;
-        }
+        .card-pi .card-value { font-size: 1.4rem; }
 
         @keyframes pulse {
-            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.6); }
-            70% { box-shadow: 0 0 0 14px rgba(239, 68, 68, 0); }
+            0%   { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.6); }
+            70%  { box-shadow: 0 0 0 14px rgba(239, 68, 68, 0); }
             100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
         }
 
+        /* ---------- RGB picker ---------- */
         .color-picker-wrapper {
             display: flex;
             align-items: center;
@@ -158,8 +211,27 @@
             border-radius: 50%;
             cursor: pointer;
             background: none;
+            padding: 0;
         }
 
+        /* ---------- Alarm banner ---------- */
+        .alarm-banner {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            background: #dc2626;
+            color: white;
+            padding: 14px;
+            text-align: center;
+            font-weight: 700;
+            font-size: 1rem;
+            z-index: 100;
+            animation: pulse 1.2s infinite;
+            letter-spacing: 0.5px;
+        }
+
+        .alarm-banner.hidden { display: none; }
+
+        /* ---------- HA banner ---------- */
         .ha-banner {
             background-color: #0284c7;
             border-radius: 12px;
@@ -170,47 +242,98 @@
             font-size: 0.9rem;
         }
 
+        /* ---------- Log ---------- */
+        .log-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.85rem;
+            color: var(--text-sub);
+            margin-bottom: 4px;
+        }
+
+        .log-header button {
+            background: #1e293b;
+            border: 1px solid #334155;
+            color: var(--text-sub);
+            padding: 4px 10px;
+            border-radius: 8px;
+            font-size: 0.75rem;
+            cursor: pointer;
+        }
+
         .log-container {
             background-color: #090d16;
             border-radius: 12px;
-            padding: 12px;
-            font-family: monospace;
-            font-size: 0.8rem;
+            padding: 10px 12px;
+            font-family: ui-monospace, Menlo, Consolas, monospace;
+            font-size: 0.78rem;
             color: #38edf8;
-            height: 100px;
+            height: 140px;
             overflow-y: auto;
             border: 1px solid #1e293b;
+            line-height: 1.5;
+        }
+
+        .log-container .log-line { white-space: pre-wrap; word-break: break-word; }
+
+        /* ---------- Offline lock ---------- */
+        body.offline .card-btn,
+        body.offline .card-lock,
+        body.offline .card-door,
+        body.offline .card-smoke,
+        body.offline .card-motion {
+            opacity: 0.45;
+            pointer-events: none;
         }
     </style>
 </head>
 <body>
 
+    <div id="alarm-banner" class="alarm-banner hidden"></div>
+
     <header>
-        <h1>Smart Home Dashboard</h1>
-        <div id="ws-status" class="status-badge">Connecting...</div>
+        <h1>🏠 Smart Home Dashboard</h1>
+        <div class="header-right">
+            <span class="status-badge" id="last-update">--</span>
+            <span class="status-badge offline" id="ws-status">Connecting...</span>
+            <button class="danger-btn" id="all-off-btn" title="Turn off all devices">ALL OFF</button>
+        </div>
     </header>
 
     <main class="dashboard-grid">
-        <!-- Температура -->
+        <!-- Pi status -->
+        <div class="card card-pi">
+            <div class="card-header">
+                <span class="card-title">Raspberry Pi</span>
+                <span>🍓</span>
+            </div>
+            <div class="card-value" id="val-pi-temp">-- °C</div>
+            <div class="card-subtext" id="val-pi-mem">RAM: -- / --</div>
+            <div class="card-subtext" id="val-pi-uptime">Uptime: --</div>
+        </div>
+
+        <!-- Temperature -->
         <div class="card">
             <div class="card-header">
                 <span class="card-title">Temperature</span>
                 <span>🌡️</span>
             </div>
             <div class="card-value" id="val-temp">-- °C</div>
+            <div class="card-subtext">Ambient (simulated)</div>
         </div>
 
-        <!-- Умный замок -->
-        <div class="card card-lock locked" id="card-lock" onclick="sendCommand('TOGGLE_LOCK')">
+        <!-- Lock -->
+        <div class="card card-lock locked" id="card-lock" onclick="toggleLock()">
             <div class="card-header">
                 <span class="card-title">Smart Lock</span>
                 <span id="lock-icon">🔒</span>
             </div>
             <div class="card-value" id="val-lock">Locked</div>
-            <div class="card-subtext" id="val-battery">Battery: 85%</div>
+            <div class="card-subtext" id="val-battery">Battery: -- %</div>
         </div>
 
-        <!-- Движение -->
+        <!-- Motion -->
         <div class="card card-motion" id="card-motion" onclick="triggerMotionSimulation()">
             <div class="card-header">
                 <span class="card-title">Motion Sensor</span>
@@ -219,7 +342,7 @@
             <div class="card-value" id="val-motion">No Motion</div>
         </div>
 
-        <!-- Датчик дыма -->
+        <!-- Smoke -->
         <div class="card card-smoke" id="card-smoke" onclick="triggerSmokeSimulation()">
             <div class="card-header">
                 <span class="card-title">Smoke Sensor</span>
@@ -228,7 +351,7 @@
             <div class="card-value" id="val-smoke">Normal</div>
         </div>
 
-        <!-- Датчик двери -->
+        <!-- Door -->
         <div class="card card-door" id="card-door" onclick="triggerDoorSimulation()">
             <div class="card-header">
                 <span class="card-title">Door Sensor</span>
@@ -237,7 +360,7 @@
             <div class="card-value" id="val-door">Closed</div>
         </div>
 
-        <!-- Лампа 1 -->
+        <!-- Lamp 1 -->
         <div class="card card-btn" id="btn-lamp1" onclick="sendCommand('TOGGLE_LAMP_1')">
             <div class="card-header">
                 <span class="card-title">Lamp 1</span>
@@ -246,7 +369,7 @@
             <div class="card-value" id="val-lamp1">OFF</div>
         </div>
 
-        <!-- Лампа 2 -->
+        <!-- Lamp 2 -->
         <div class="card card-btn" id="btn-lamp2" onclick="sendCommand('TOGGLE_LAMP_2')">
             <div class="card-header">
                 <span class="card-title">Lamp 2</span>
@@ -255,7 +378,7 @@
             <div class="card-value" id="val-lamp2">OFF</div>
         </div>
 
-        <!-- Вентилятор -->
+        <!-- Fan -->
         <div class="card card-btn" id="btn-fan" onclick="sendCommand('TOGGLE_FAN')">
             <div class="card-header">
                 <span class="card-title">Fan Control</span>
@@ -264,7 +387,7 @@
             <div class="card-value" id="val-fan">OFF</div>
         </div>
 
-        <!-- RGB Подсветка -->
+        <!-- RGB -->
         <div class="card card-btn" id="card-rgb">
             <div class="card-header" onclick="sendCommand('TOGGLE_RGB')">
                 <span class="card-title">RGB Backlight</span>
@@ -272,8 +395,9 @@
             </div>
             <div class="card-value" id="val-rgb" onclick="sendCommand('TOGGLE_RGB')">OFF</div>
             <div class="color-picker-wrapper">
-                <span style="font-size: 0.8rem; color: var(--text-sub);">Color:</span>
-                <input type="color" id="colorPicker" value="#ff0000" onchange="changeRgbColor(event)" onclick="event.stopPropagation()">
+                <span style="font-size:0.8rem; color:var(--text-sub);">Color:</span>
+                <input type="color" id="colorPicker" value="#ff0000"
+                       onclick="event.stopPropagation()">
             </div>
         </div>
     </main>
@@ -283,150 +407,246 @@
         <span id="ha-status">Ready</span>
     </div>
 
-    <div class="log-container" id="log-window">
-        [System Initialization] Ready with Smart Lock support...
+    <div class="log-header">
+        <span>Activity Log</span>
+        <button onclick="clearLog()">Clear</button>
     </div>
+    <div class="log-container" id="log-window"></div>
 
     <script>
-        let ws;
+        // ============================================================
+        //  Constants & DOM refs
+        // ============================================================
+        const wsStatusEl = document.getElementById('ws-status');
+        const lastUpdateEl = document.getElementById('last-update');
         const logWin = document.getElementById('log-window');
+        const alarmBanner = document.getElementById('alarm-banner');
+        const body = document.body;
 
+        const MAX_LOG_LINES = 100;
+
+        // ============================================================
+        //  Logging
+        // ============================================================
         function addLog(msg) {
-            const time = new Date().toLocaleTimeString();
-            logWin.innerHTML += `<br>[${time}] ${msg}`;
+            const line = document.createElement('div');
+            line.className = 'log-line';
+            line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            logWin.appendChild(line);
+            while (logWin.childElementCount > MAX_LOG_LINES) {
+                logWin.firstChild.remove();
+            }
             logWin.scrollTop = logWin.scrollHeight;
         }
 
+        function clearLog() {
+            logWin.innerHTML = '';
+            addLog('Log cleared.');
+        }
+
+        // ============================================================
+        //  WebSocket (with exponential backoff + visibility guard)
+        // ============================================================
+        let ws = null;
+        let retry = 0;
+        let reconnectTimer = null;
+
+        function setConnected(connected) {
+            wsStatusEl.innerText = connected ? 'System Online' : 'Disconnected';
+            wsStatusEl.classList.toggle('online', connected);
+            wsStatusEl.classList.toggle('offline', !connected);
+            body.classList.toggle('offline', !connected);
+        }
+
         function connectWS() {
-            const host = window.location.host;
-            ws = new WebSocket(`ws://${host}`);
+            if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+
+            const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${proto}//${location.host}`);
 
             ws.onopen = () => {
-                const statusEl = document.getElementById('ws-status');
-                statusEl.innerText = "System Online";
-                statusEl.classList.add("online");
-                addLog("Connected to WebSocket server.");
+                retry = 0;
+                setConnected(true);
+                addLog('Connected to WebSocket server.');
+                ws.send(JSON.stringify({ action: 'PING' }));
             };
 
             ws.onmessage = (event) => {
-                const msg = JSON.parse(event.data);
+                let msg;
+                try { msg = JSON.parse(event.data); } catch { return; }
+
                 if (msg.type === 'STATE_UPDATE') {
                     updateUI(msg.payload);
+                } else if (msg.type === 'ERROR') {
+                    addLog(`⚠️ Server error: ${msg.message}`);
+                } else if (msg.type === 'PONG') {
+                    // silent
                 }
             };
 
             ws.onclose = () => {
-                const statusEl = document.getElementById('ws-status');
-                statusEl.innerText = "Disconnected";
-                statusEl.classList.remove("online");
-                addLog("WebSocket connection lost. Reconnecting in 3s...");
-                setTimeout(connectWS, 3000);
+                setConnected(false);
+                const delay = Math.min(30000, 1000 * (2 ** retry++));
+                addLog(`Connection lost. Retry in ${Math.round(delay / 1000)}s...`);
+                clearTimeout(reconnectTimer);
+                reconnectTimer = setTimeout(connectWS, delay);
             };
+
+            ws.onerror = () => ws.close();
         }
 
+        // Reconnect when tab comes back to foreground
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) connectWS();
+        });
+
+        // ============================================================
+        //  State → UI
+        // ============================================================
         function updateUI(state) {
             document.getElementById('val-temp').innerText = `${state.temperature} °C`;
 
-            // Умный замок
+            // Lock
             const lockCard = document.getElementById('card-lock');
             const lockVal = document.getElementById('val-lock');
             const lockIcon = document.getElementById('lock-icon');
             const batteryVal = document.getElementById('val-battery');
-            
-            if (state.lock) {
-                lockCard.classList.remove('locked');
-                lockCard.classList.add('unlocked');
-                lockVal.innerText = "Unlocked";
-                lockIcon.innerText = "🔓";
-            } else {
-                lockCard.classList.remove('unlocked');
-                lockCard.classList.add('locked');
-                lockVal.innerText = "Locked";
-                lockIcon.innerText = "🔒";
-            }
-            batteryVal.innerText = `Battery: ${state.battery}%`;
 
-            // Движение
+            lockCard.classList.toggle('unlocked', !!state.lock);
+            lockCard.classList.toggle('locked', !state.lock);
+            lockVal.innerText = state.lock ? 'Unlocked' : 'Locked';
+            lockIcon.innerText = state.lock ? '🔓' : '🔒';
+
+            batteryVal.innerText = `Battery: ${state.battery}%`;
+            batteryVal.classList.toggle('low', state.battery < 20);
+
+            // Motion
             const motionCard = document.getElementById('card-motion');
             const motionVal = document.getElementById('val-motion');
-            if (state.motion) {
-                motionCard.classList.add('detected');
-                motionVal.innerText = "Motion Detected!";
-            } else {
-                motionCard.classList.remove('detected');
-                motionVal.innerText = "No Motion";
-            }
+            motionCard.classList.toggle('detected', !!state.motion);
+            motionVal.innerText = state.motion ? 'Motion Detected!' : 'No Motion';
 
-            // Дым
+            // Smoke
             const smokeCard = document.getElementById('card-smoke');
             const smokeVal = document.getElementById('val-smoke');
-            if (state.smoke) {
-                smokeCard.classList.add('danger');
-                smokeVal.innerText = "Smoke Detected!";
-            } else {
-                smokeCard.classList.remove('danger');
-                smokeVal.innerText = "Normal";
-            }
+            smokeCard.classList.toggle('danger', !!state.smoke);
+            smokeVal.innerText = state.smoke ? 'Smoke Detected!' : 'Normal';
 
-            // Дверь
+            // Door
             const doorCard = document.getElementById('card-door');
             const doorVal = document.getElementById('val-door');
-            if (state.door) {
-                doorCard.classList.add('open');
-                doorVal.innerText = "Open";
-            } else {
-                doorCard.classList.remove('open');
-                doorVal.innerText = "Closed";
-            }
+            doorCard.classList.toggle('open', !!state.door);
+            doorVal.innerText = state.door ? 'Open' : 'Closed';
 
+            // Relays
             updateDeviceBtn('btn-lamp1', 'val-lamp1', state.lamp1);
             updateDeviceBtn('btn-lamp2', 'val-lamp2', state.lamp2);
-            updateDeviceBtn('btn-fan', 'val-fan', state.fan);
+            updateDeviceBtn('btn-fan',   'val-fan',   state.fan);
+            updateDeviceBtn('card-rgb',  'val-rgb',   state.rgbPower);
 
-            updateDeviceBtn('card-rgb', 'val-rgb', state.rgbPower);
-            document.getElementById('colorPicker').value = state.rgbColor;
+            if (state.rgbColor) {
+                document.getElementById('colorPicker').value = state.rgbColor;
+            }
+
+            if (state.haBridgeStatus) {
+                document.getElementById('ha-status').innerText = state.haBridgeStatus;
+            }
+
+            if (state.lastUpdate) {
+                lastUpdateEl.innerText = `Updated ${new Date(state.lastUpdate).toLocaleTimeString()}`;
+            }
+
+            updateAlarmBanner(state);
         }
 
         function updateDeviceBtn(btnId, valId, isOn) {
             const btn = document.getElementById(btnId);
             const val = document.getElementById(valId);
-            if (isOn) {
-                btn.classList.add('active');
-                val.innerText = "ON";
+            btn.classList.toggle('active', !!isOn);
+            val.innerText = isOn ? 'ON' : 'OFF';
+        }
+
+        function updateAlarmBanner(s) {
+            const alerts = [];
+            if (s.smoke)  alerts.push('🔥 SMOKE');
+            if (s.motion) alerts.push('🏃 MOTION');
+            if (s.door)   alerts.push('🚪 DOOR OPEN');
+
+            if (alerts.length) {
+                alarmBanner.textContent = alerts.join('  •  ');
+                alarmBanner.classList.remove('hidden');
             } else {
-                btn.classList.remove('active');
-                val.innerText = "OFF";
+                alarmBanner.classList.add('hidden');
             }
         }
 
+        // ============================================================
+        //  Commands
+        // ============================================================
         function sendCommand(actionName) {
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ action: actionName }));
-                addLog(`Action sent: ${actionName}`);
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                addLog('Cannot send — not connected.');
+                return;
+            }
+            ws.send(JSON.stringify({ action: actionName }));
+            addLog(`Action sent: ${actionName}`);
+        }
+
+        function toggleLock() {
+            const unlocking = document.getElementById('card-lock').classList.contains('locked');
+            const question = unlocking
+                ? 'Unlock the door? This controls a real lock.'
+                : 'Lock the door?';
+            if (!confirm(question)) return;
+            sendCommand('TOGGLE_LOCK');
+        }
+
+        function triggerMotionSimulation() { sendCommand('TRIGGER_MOTION'); }
+        function triggerSmokeSimulation()  { sendCommand('TRIGGER_SMOKE'); }
+        function triggerDoorSimulation()   { sendCommand('TRIGGER_DOOR'); }
+
+        document.getElementById('all-off-btn').addEventListener('click', () => {
+            if (!confirm('Turn off ALL devices?')) return;
+            sendCommand('ALL_OFF');
+        });
+
+        // RGB picker: debounce 'input' so we don't spam eWeLink
+        const colorPicker = document.getElementById('colorPicker');
+        let rgbTimer = null;
+        colorPicker.addEventListener('input', (e) => {
+            const color = e.target.value;
+            clearTimeout(rgbTimer);
+            rgbTimer = setTimeout(() => {
+                if (!ws || ws.readyState !== WebSocket.OPEN) return;
+                ws.send(JSON.stringify({ action: 'SET_RGB_COLOR', color }));
+                addLog(`RGB color → ${color}`);
+            }, 300);
+        });
+
+        // ============================================================
+        //  Pi stats
+        // ============================================================
+        async function refreshPi() {
+            try {
+                const res = await fetch('/api/pi');
+                if (!res.ok) return;
+                const d = await res.json();
+
+                document.getElementById('val-pi-temp').innerText =
+                    d.tempC != null ? `${d.tempC} °C` : '--';
+
+                const usedMb = Math.round((d.memTotal - d.memFree) / 1e6);
+                const totalMb = Math.round(d.memTotal / 1e6);
+                document.getElementById('val-pi-mem').innerText =
+                    `RAM: ${usedMb} / ${totalMb} MB`;
+
+                const h = Math.floor(d.uptime / 3600);
+                const m = Math.floor((d.uptime % 3600) / 60);
+                document.getElementById('val-pi-uptime').innerText =
+                    `Uptime: ${h}h ${m}m`;
+            } catch {
+                /* ignore */
             }
         }
-
-        function changeRgbColor(event) {
-            const colorHex = event.target.value;
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ action: 'SET_RGB_COLOR', color: colorHex }));
-                addLog(`RGB Color changed to: ${colorHex}`);
-            }
-        }
-
-        function triggerMotionSimulation() {
-            sendCommand('TRIGGER_MOTION');
-        }
-
-        function triggerSmokeSimulation() {
-            sendCommand('TRIGGER_SMOKE');
-        }
-
-        function triggerDoorSimulation() {
-            sendCommand('TRIGGER_DOOR');
-        }
-
-        connectWS();
-    </script>
-</body>
-</html>
+        refreshPi();
+        setInterval(refreshPi,
