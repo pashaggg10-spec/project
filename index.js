@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { WebSocketServer, WebSocket } = require('ws');
-const ewelink = require('ewelink-api');
+const mqtt = require('mqtt');
 
 const app = express();
 const server = http.createServer(app);
@@ -14,14 +14,13 @@ const wss = new WebSocketServer({ server });
 
 const PORT = process.env.PORT || 3000;
 
-// --- eWeLink config ---
-const login  = process.env.EWELINK_EMAIL;
-const pass   = process.env.EWELINK_PASSWORD;
-const region = process.env.EWELINK_REGION || 'eu';
+// --- MQTT config ---
+const MQTT_HOST = '192.168.15.138'; // IP вашего Raspberry Pi
+const MQTT_TOPIC_SONOFF = 'sonoff4ch'; // Топик вашего реле
 
-const switchId     = process.env.SWITCH_ID    || '10017b7136';
-const rgbDeviceId  = process.env.RGB_DEVICE_ID|| '100123e422';
-const lockDeviceId = process.env.LOCK_DEVICE_ID || 'YOUR_LOCK_DEVICE_ID';
+// Топики для будущих устройств (пока не используются, но готовы)
+const MQTT_TOPIC_RGB = 'rgb_strip'; 
+const MQTT_TOPIC_LOCK = 'smart_lock';
 
 // --- Express middleware ---
 app.use(express.static(path.join(__dirname, 'public')));
@@ -44,14 +43,70 @@ const systemState = {
     lastUpdate: Date.now(),
 };
 
-// --- Single shared eWeLink connection ---
-let ewelinkConn = null;
-async function getEWeLink() {
-    if (!ewelinkConn) {
-        ewelinkConn = new ewelink({ email: login, password: pass, region });
+// --- MQTT Connection ---
+const mqttClient = mqtt.connect(`mqtt://${MQTT_HOST}:1883`);
+
+mqttClient.on('connect', () => {
+    console.log('[MQTT] Connected to broker at', MQTT_HOST);
+    
+    // Подписываемся на статусы реле (Sonoff 4CH)
+    mqttClient.subscribe(`stat/${MQTT_TOPIC_SONOFF}/POWER1`);
+    mqttClient.subscribe(`stat/${MQTT_TOPIC_SONOFF}/POWER2`);
+    mqttClient.subscribe(`stat/${MQTT_TOPIC_SONOFF}/POWER3`);
+    
+    // Заготовки для будущих устройств (когда подключите их, они начнут слать сюда данные)
+    mqttClient.subscribe(`stat/${MQTT_TOPIC_RGB}/POWER`);
+    mqttClient.subscribe(`stat/${MQTT_TOPIC_RGB}/RESULT`);
+    mqttClient.subscribe(`stat/${MQTT_TOPIC_LOCK}/POWER`);
+});
+
+mqttClient.on('message', (topic, message) => {
+    const msg = message.toString();
+    console.log(`[MQTT] Received: ${topic} -> ${msg}`);
+    let changed = false;
+
+    // Обработка Sonoff 4CH
+    if (topic === `stat/${MQTT_TOPIC_SONOFF}/POWER1`) {
+        systemState.fan = (msg === 'ON');
+        changed = true;
     }
-    return ewelinkConn;
-}
+    if (topic === `stat/${MQTT_TOPIC_SONOFF}/POWER2`) {
+        systemState.lamp1 = (msg === 'ON');
+        changed = true;
+    }
+    if (topic === `stat/${MQTT_TOPIC_SONOFF}/POWER3`) {
+        systemState.lamp2 = (msg === 'ON');
+        changed = true;
+    }
+
+    // Обработка будущей RGB ленты (Tasmota шлет JSON в RESULT)
+    if (topic === `stat/${MQTT_TOPIC_RGB}/POWER`) {
+        systemState.rgbPower = (msg === 'ON');
+        changed = true;
+    }
+    if (topic === `stat/${MQTT_TOPIC_RGB}/RESULT` && msg.includes('Color')) {
+        try {
+            const data = JSON.parse(msg);
+            if (data.Color) {
+                // Tasmota обычно возвращает цвет в формате "RRGGBB"
+                systemState.rgbColor = '#' + data.Color;
+                changed = true;
+            }
+        } catch(e) {}
+    }
+
+    // Обработка будущего замка
+    if (topic === `stat/${MQTT_TOPIC_LOCK}/POWER`) {
+        systemState.lock = (msg === 'ON'); // Предполагаем, что ON = Unlocked
+        changed = true;
+    }
+
+    if (changed) broadcastState();
+});
+
+mqttClient.on('error', (err) => {
+    console.error('[MQTT] Connection error:', err.message);
+});
 
 // --- Broadcast helper ---
 function broadcastState() {
@@ -66,45 +121,13 @@ function sendTo(ws, msg) {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
 }
 
-// --- Channel toggle for the multi-channel relay ---
-async function handleChannelToggle(channelNumber, currentState, stateKey) {
-    try {
-        const connection = await getEWeLink();
-        const newState = currentState ? 'off' : 'on';
-        const targetOutlet = channelNumber - 1;
-
-        console.log(`[eWeLink] switch ${switchId} outlet ${targetOutlet} -> ${newState}`);
-        await connection.setDevicePowerState(switchId, newState, { outlet: targetOutlet });
-
-        systemState[stateKey] = !currentState;
-        broadcastState();
-    } catch (err) {
-        console.error('[eWeLink] channel toggle failed:', err.message);
-    }
-}
-
-// --- Periodic sync from eWeLink (physical switches, other apps) ---
-async function syncFromEWelink() {
-    try {
-        const connection = await getEWeLink();
-        const devices = await connection.getDevices();
-        if (!Array.isArray(devices)) return;
-
-        for (const d of devices) {
-            if (d.deviceid === switchId && d.params && d.params.switches) {
-                const sw = d.params.switches;
-                // Channel 1 = fan, 2 = lamp1, 3 = lamp2
-                if (sw[0] && 'switch' in sw[0]) systemState.fan   = sw[0].switch === 'on';
-                if (sw[1] && 'switch' in sw[1]) systemState.lamp1 = sw[1].switch === 'on';
-                if (sw[2] && 'switch' in sw[2]) systemState.lamp2 = sw[2].switch === 'on';
-            }
-            if (d.deviceid === rgbDeviceId && d.params && d.params.switch) {
-                systemState.rgbPower = d.params.switch === 'on';
-            }
-        }
-    } catch (err) {
-        // Silent — don't spam logs if Pi loses internet
-    }
+// --- Управление многоканальным реле через MQTT ---
+function handleChannelToggle(channelNumber, currentState) {
+    const topic = `cmnd/${MQTT_TOPIC_SONOFF}/POWER${channelNumber}`;
+    const payload = currentState ? 'OFF' : 'ON';
+    
+    console.log(`[MQTT] Sending command: ${topic} -> ${payload}`);
+    mqttClient.publish(topic, payload);
 }
 
 // --- REST endpoints ---
@@ -115,8 +138,7 @@ app.get('/api/health', (req, res) => {
         status: 'ok',
         clients: wss.clients.size,
         uptime: process.uptime(),
-        ewelink: ewelinkConn ? 'ready' : 'not-initialised',
-        lockConfigured: lockDeviceId !== 'YOUR_LOCK_DEVICE_ID',
+        mqtt: mqttClient.connected ? 'connected' : 'disconnected',
     });
 });
 
@@ -124,7 +146,7 @@ app.get('/api/pi', (req, res) => {
     let tempC = null;
     try {
         tempC = (parseFloat(fs.readFileSync('/sys/class/thermal/thermal_zone0/temp', 'utf8')) / 1000).toFixed(1);
-    } catch { /* not a Pi or no permission */ }
+    } catch { }
 
     res.json({
         hostname: os.hostname(),
@@ -155,76 +177,53 @@ wss.on('connection', (ws) => {
         try {
             switch (parsed.action) {
                 case 'TOGGLE_LAMP_1':
-                    await handleChannelToggle(2, systemState.lamp1, 'lamp1');
+                    handleChannelToggle(2, systemState.lamp1);
                     break;
 
                 case 'TOGGLE_LAMP_2':
-                    await handleChannelToggle(3, systemState.lamp2, 'lamp2');
+                    handleChannelToggle(3, systemState.lamp2);
                     break;
 
                 case 'TOGGLE_FAN':
-                    await handleChannelToggle(1, systemState.fan, 'fan');
+                    handleChannelToggle(1, systemState.fan);
                     break;
 
                 case 'TOGGLE_RGB': {
-                    const connection = await getEWeLink();
-                    systemState.rgbPower = !systemState.rgbPower;
-                    await connection.setDevicePowerState(
-                        rgbDeviceId,
-                        systemState.rgbPower ? 'on' : 'off'
-                    );
-                    broadcastState();
+                    // Заглушка для будущей RGB ленты на MQTT
+                    const newState = systemState.rgbPower ? 'OFF' : 'ON';
+                    mqttClient.publish(`cmnd/${MQTT_TOPIC_RGB}/POWER`, newState);
                     break;
                 }
 
                 case 'SET_RGB_COLOR': {
+                    // Заглушка для будущей RGB ленты
                     if (!/^#[0-9a-fA-F]{6}$/.test(parsed.color || '')) {
                         return sendTo(ws, { type: 'ERROR', message: 'bad color' });
                     }
-                    systemState.rgbColor = parsed.color;
-                    systemState.rgbPower = true;
-
-                    const r = parseInt(parsed.color.slice(1, 3), 16);
-                    const g = parseInt(parsed.color.slice(3, 5), 16);
-                    const b = parseInt(parsed.color.slice(5, 7), 16);
-
-                    const connection = await getEWeLink();
-                    await connection.setDevicePowerState(rgbDeviceId, 'on', {
-                        outlet: 1,
-                        zyx_mode: 2,
-                        zyx_data: [r, g, b].join(','),
-                    });
-                    broadcastState();
+                    // Tasmota ожидает цвет в HEX без решетки, например "FF0000"
+                    const hexColor = parsed.color.replace('#', '').toUpperCase();
+                    
+                    // В Tasmota для RGB лент команда Color отправляется в топик cmnd/.../Color
+                    mqttClient.publish(`cmnd/${MQTT_TOPIC_RGB}/Color`, hexColor);
+                    mqttClient.publish(`cmnd/${MQTT_TOPIC_RGB}/POWER`, 'ON');
                     break;
                 }
 
                 case 'TOGGLE_LOCK': {
-                    if (lockDeviceId === 'YOUR_LOCK_DEVICE_ID') {
-                        return sendTo(ws, {
-                            type: 'ERROR',
-                            message: 'Lock device not configured. Set LOCK_DEVICE_ID in .env',
-                        });
-                    }
-                    const connection = await getEWeLink();
-                    systemState.lock = !systemState.lock;
-                    const lockState = systemState.lock ? 'unlock' : 'lock';
-                    try {
-                        await connection.setDevicePowerState(lockDeviceId, lockState);
-                    } catch (err) {
-                        console.log('[eWeLink] lock API error (state still updated):', err.message);
-                    }
-                    broadcastState();
+                    // Заглушка для будущего замка на MQTT
+                    const lockState = systemState.lock ? 'OFF' : 'ON';
+                    mqttClient.publish(`cmnd/${MQTT_TOPIC_LOCK}/POWER`, lockState);
                     break;
                 }
 
                 case 'ALL_OFF': {
-                    try {
-                        const connection = await getEWeLink();
-                        await connection.setDevicePowerState(switchId, 'off');
-                        await connection.setDevicePowerState(rgbDeviceId, 'off');
-                    } catch (err) {
-                        console.error('[eWeLink] ALL_OFF error:', err.message);
-                    }
+                    // Выключаем всё через MQTT
+                    mqttClient.publish(`cmnd/${MQTT_TOPIC_SONOFF}/POWER1`, 'OFF');
+                    mqttClient.publish(`cmnd/${MQTT_TOPIC_SONOFF}/POWER2`, 'OFF');
+                    mqttClient.publish(`cmnd/${MQTT_TOPIC_SONOFF}/POWER3`, 'OFF');
+                    mqttClient.publish(`cmnd/${MQTT_TOPIC_RGB}/POWER`, 'OFF');
+                    
+                    // Принудительно обновляем UI (на случай если устройства оффлайн)
                     systemState.lamp1 = false;
                     systemState.lamp2 = false;
                     systemState.fan = false;
@@ -275,9 +274,6 @@ setInterval(() => {
     });
 }, 30000);
 
-// --- Periodic eWeLink sync ---
-setInterval(syncFromEWelink, 15000);
-
 // --- Startup ---
 server.listen(PORT, '0.0.0.0', () => {
     const nets = os.networkInterfaces();
@@ -286,10 +282,9 @@ server.listen(PORT, '0.0.0.0', () => {
         .find((n) => n && n.family === 'IPv4' && !n.internal)?.address;
 
     console.log('==============================================');
-    console.log(`[Server] IoT Dashboard running`);
+    console.log(`[Server] IoT Dashboard running (MQTT ONLY)`);
     console.log(`[Server] Local:   http://localhost:${PORT}`);
     if (lanIp) console.log(`[Server] Network: http://${lanIp}:${PORT}`);
-    console.log(`[Server] Lock configured: ${lockDeviceId !== 'YOUR_LOCK_DEVICE_ID'}`);
     console.log('==============================================');
 });
 
