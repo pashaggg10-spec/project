@@ -137,28 +137,16 @@
             font-weight: 700;
         }
 
-        .card-btn,
-        .card-lock,
-        .card-door,
-        .card-smoke,
-        .card-motion {
+        .card-btn, .card-lock, .card-door, .card-smoke, .card-motion {
             cursor: pointer;
         }
 
-        .card-btn:active,
-        .card-lock:active,
-        .card-door:active,
-        .card-smoke:active,
-        .card-motion:active {
+        .card-btn:active, .card-lock:active, .card-door:active, .card-smoke:active, .card-motion:active {
             transform: scale(0.97);
         }
 
         @media (hover: hover) {
-            .card-btn:hover,
-            .card-lock:hover,
-            .card-door:hover,
-            .card-smoke:hover,
-            .card-motion:hover {
+            .card-btn:hover, .card-lock:hover, .card-door:hover, .card-smoke:hover, .card-motion:hover {
                 border-color: #475569;
                 transform: translateY(-2px);
             }
@@ -180,9 +168,7 @@
             background-color: rgba(34, 197, 94, 0.15);
         }
 
-        .card-motion.detected,
-        .card-smoke.danger,
-        .card-door.open {
+        .card-motion.detected, .card-smoke.danger, .card-door.open {
             border-color: var(--accent-red);
             background-color: rgba(239, 68, 68, 0.25);
             animation: pulse 1.2s infinite;
@@ -396,8 +382,7 @@
             <div class="card-value" id="val-rgb" onclick="sendCommand('TOGGLE_RGB')">OFF</div>
             <div class="color-picker-wrapper">
                 <span style="font-size:0.8rem; color:var(--text-sub);">Color:</span>
-                <input type="color" id="colorPicker" value="#ff0000"
-                       onclick="event.stopPropagation()">
+                <input type="color" id="colorPicker" value="#ff0000" onclick="event.stopPropagation()">
             </div>
         </div>
     </main>
@@ -479,8 +464,6 @@
                     updateUI(msg.payload);
                 } else if (msg.type === 'ERROR') {
                     addLog(`⚠️ Server error: ${msg.message}`);
-                } else if (msg.type === 'PONG') {
-                    // silent
                 }
             };
 
@@ -495,7 +478,6 @@
             ws.onerror = () => ws.close();
         }
 
-        // Reconnect when tab comes back to foreground
         document.addEventListener('visibilitychange', () => {
             if (!document.hidden) connectWS();
         });
@@ -649,4 +631,12 @@
             }
         }
         refreshPi();
-        setInterval(refreshPi,
+        setInterval(refreshPi, 5000);
+
+        // ============================================================
+        //  Start WebSocket connection
+        // ============================================================
+        connectWS();
+    </script>
+</body>
+</html>
