@@ -1,11 +1,11 @@
 {
   "name": "iot-pi4-dashboard",
   "version": "1.1.0",
+  "type": "module",
   "description": "Smart Home Dashboard for Raspberry Pi 4",
   "main": "index.js",
-  "scripts": {
-    "start": "node index.js"
-  },
+  ...
+},
   "dependencies": {
     "dotenv": "^16.3.1",
     "ewelink-api": "^3.1.1",
