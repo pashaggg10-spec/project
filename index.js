@@ -115,7 +115,9 @@ mqttClient.on('error', (err) => {
 async function initEwelink() {
     try {
         console.log('[eWeLink] Вход в аккаунт...');
-        await ewelinkConnection.login();
+// Вызываем login как статический метод класса, передавая учетные данные
+        const loginData = await ewelink.login(EWELINK_EMAIL, EWELINK_PASSWORD, EWELINK_REGION);
+        console.log('[eWeLink] Успешный вход. Открытие WebSocket...');
         console.log('[eWeLink] Успешный вход. Открытие WebSocket...');
 
         // Открываем WebSocket для получения событий в реальном времени
