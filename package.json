@@ -1,14 +1,17 @@
 {
   "name": "iot-pi4-dashboard",
-  "version": "1.1.0",
+  "version": "1.2.0",
+  "description": "Smart Home Dashboard for Raspberry Pi 4 (MQTT + eWeLink API Next)",
   "type": "module",
-  "description": "Smart Home Dashboard for Raspberry Pi 4",
   "main": "index.js",
-},
+  "scripts": {
+    "start": "node index.js"
+  },
   "dependencies": {
-    "dotenv": "^16.3.1",
-    "ewelink-api": "^3.1.1",
-    "express": "^4.18.2",
-    "ws": "^8.13.0"
+    "dotenv": "^16.4.5",
+    "ewelink-api-next": "^1.0.7",
+    "express": "^4.19.2",
+    "mqtt": "^5.7.0",
+    "ws": "^8.17.0"
   }
-
+}
