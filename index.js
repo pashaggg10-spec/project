@@ -28,8 +28,8 @@ const MQTT_TOPIC_RGB = 'rgb_strip';
 const MQTT_TOPIC_LOCK = 'smart_lock';
 
 // --- Конфигурация eWeLink (Взято из вашего кода) ---
-const EWELINK_APP_ID = process.env.EWELINK_APP_ID || '7brXbp7Vi3AcxOIUQjB4gdITbinOjbId';
-const EWELINK_APP_SECRET = process.env.EWELINK_APP_SECRET || 'Kh6th5xrkBgAgI5Jj17TBn9R3WjAE7CF';
+const EWELINK_APP_ID = process.env.EWELINK_APP_ID || 'Kh6th5xrkBgAgI5Jj17TBn9R3WjAE7CF';
+const EWELINK_APP_SECRET = process.env.EWELINK_APP_SECRET || '7brXbp7Vi3AcxOIUQjB4gdITbinOjbId';
 const EWELINK_REGION = process.env.EWELINK_REGION || 'eu';
 const EWELINK_ACCOUNT = process.env.EWELINK_EMAIL;
 const EWELINK_PASSWORD = process.env.EWELINK_PASSWORD;
