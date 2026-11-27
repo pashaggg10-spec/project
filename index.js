@@ -26,7 +26,6 @@ const MQTT_TOPIC_RGB = 'rgb_strip';
 const MQTT_TOPIC_LOCK = 'smart_lock';
 
 // --- Конфигурация eWeLink ---
-// Берем ключи, которые вы прислали с сайта
 const EWELINK_APP_ID = 'Kh6th5xrkBgAgI5Jj17TBn9R3WjAE7CF';
 const EWELINK_APP_SECRET = '7brXbp7Vi3AcxOIUQjB4gdITbinOjbId';
 
@@ -38,9 +37,8 @@ const EWELINK_AREA_CODE = process.env.EWELINK_AREA_CODE || '+372';
 // --- Конфигурация GPIO ---
 const PIN_MOTION = 17; 
 const PIN_LIGHT = 27;  
-const GPIO_CHIP = 512; // Указываем чип 512, который есть в вашей системе
+const GPIO_CHIP = 512;
 
-// Инициализация клиента eWeLink С КЛЮЧАМИ (чтобы убрать ошибку indexOf)
 const ewelinkClient = new eWeLink.WebAPI({
     appId: EWELINK_APP_ID,
     appSecret: EWELINK_APP_SECRET,
@@ -75,7 +73,6 @@ function initGpio() {
     const mode = gpiox.GPIO_MODE_INPUT_PULLDOWN;
     const edge = gpiox.GPIO_EDGE_BOTH;
 
-    // Передаем GPIO_CHIP (512) вместо дефолтного 0
     if (!gpiox.init_gpio(PIN_MOTION, mode, GPIO_CHIP)) {
         console.error(`[GPIO] Ошибка инициализации пина ${PIN_MOTION}: ${gpiox.error_text()}`);
     } else {
@@ -132,19 +129,28 @@ mqttClient.on('message', (topic, message) => {
 
 mqttClient.on('error', (err) => console.error('[MQTT] Ошибка:', err.message));
 
-// --- Интеграция с eWeLink ---
+// --- Интеграция с eWeLink (с логированием ответа) ---
 async function initEwelink() {
     try {
         console.log('[eWeLink] Попытка входа по Email...');
-        
+        console.log('[eWeLink] Отправляемые данные:', {
+            account: EWELINK_EMAIL,
+            areaCode: EWELINK_AREA_CODE,
+            region: EWELINK_REGION,
+            appId: EWELINK_APP_ID.substring(0, 8) + '...'
+        });
+
+        // Логируем ответ от сервера до вызова login, чтобы увидеть реальную ошибку
         const loginResponse = await ewelinkClient.user.login({
             account: EWELINK_EMAIL,
             password: EWELINK_PASSWORD,
             areaCode: EWELINK_AREA_CODE
         });
 
+        console.log('[eWeLink] Ответ сервера:', JSON.stringify(loginResponse, null, 2));
+
         if (loginResponse.error !== 0) {
-            throw new Error(`Ошибка входа: ${JSON.stringify(loginResponse)}`);
+            throw new Error(`Ошибка входа (код ${loginResponse.error}): ${loginResponse.msg || 'Неизвестная ошибка'}`);
         }
         console.log('[eWeLink] Успешный вход. Пользователь:', loginResponse.data.user.email);
 
@@ -167,7 +173,6 @@ async function initEwelink() {
                 const params = msg.params;
                 let changed = false;
 
-                // Датчик двери
                 if (params.door !== undefined) {
                     systemState.door = (params.door === 1 || params.door === 'on');
                     changed = true;
@@ -176,7 +181,6 @@ async function initEwelink() {
                     changed = true;
                 }
 
-                // Датчик температуры
                 if (params.temperature !== undefined) {
                     systemState.temperature = params.temperature;
                     changed = true;
@@ -199,6 +203,7 @@ async function initEwelink() {
 
     } catch (error) {
         console.error('[eWeLink] Ошибка инициализации:', error.message);
+        console.error('[eWeLink] Полный стек ошибки:', error.stack);
         setTimeout(initEwelink, 30000); 
     }
 }
