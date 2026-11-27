@@ -1,14 +1,17 @@
-require('dotenv').config();
+import 'dotenv/config';
+import express from 'express';
+import http from 'http';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { WebSocketServer, WebSocket } from 'ws';
+import mqtt from 'mqtt';
+import eWeLink from 'ewelink-api-next';
 
-const express = require('express');
-const http = require('http');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const { WebSocketServer, WebSocket } = require('ws');
-const mqtt = require('mqtt');
-// Добавляем библиотеку для работы с eWeLink
-const ewelink = require('ewelink-api');
+// Получаем __dirname для ES-модулей
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const server = http.createServer(app);
@@ -16,23 +19,26 @@ const wss = new WebSocketServer({ server });
 
 const PORT = process.env.PORT || 3000;
 
-// --- Конфигурация MQTT (для локальных устройств) ---
+// --- Конфигурация MQTT ---
 const MQTT_HOST = '192.168.15.138';
 const MQTT_TOPIC_SONOFF = 'sonoff4ch';
 const MQTT_TOPIC_RGB = 'rgb_strip';
 const MQTT_TOPIC_LOCK = 'smart_lock';
 
-// --- Конфигурация eWeLink (для облачных устройств, таких как DW2-WIFI) ---
-// Данные берутся из файла static.env или .env
-const EWELINK_EMAIL = process.env.EWELINK_EMAIL || 'dreamteam.iot@mail.com';
-const EWELINK_PASSWORD = process.env.EWELINK_PASSWORD || 'edtr61iot';
+// --- Конфигурация eWeLink (НОВЫЕ КЛЮЧИ) ---
+const EWELINK_APP_ID = process.env.EWELINK_APP_ID || 'ВАШ_APP_ID';
+const EWELINK_APP_SECRET = process.env.EWELINK_APP_SECRET || 'ВАШ_APP_SECRET';
 const EWELINK_REGION = process.env.EWELINK_REGION || 'eu';
+const EWELINK_ACCOUNT = process.env.EWELINK_EMAIL; // Email от аккаунта eWeLink
+const EWELINK_PASSWORD = process.env.EWELINK_PASSWORD; // Пароль от аккаунта eWeLink
+const EWELINK_AREA_CODE = process.env.EWELINK_AREA_CODE || '+7'; // Ваш код страны
 
-// Создаем экземпляр подключения к eWeLink
-const ewelinkConnection = new ewelink({
-    email: EWELINK_EMAIL,
-    password: EWELINK_PASSWORD,
+// Создаем экземпляр клиента eWeLink
+const ewelinkClient = new eWeLink.WebAPI({
+    appId: EWELINK_APP_ID,
+    appSecret: EWELINK_APP_SECRET,
     region: EWELINK_REGION,
+    logObj: eWeLink.createLogger('eu') // Логирование для отладки
 });
 
 // --- Express middleware ---
@@ -44,9 +50,9 @@ const systemState = {
     temperature: 24.5,
     motion: false,
     smoke: false,
-    door: false, // Это состояние будет обновляться от датчика DW2-WIFI
+    door: false,
     lock: false,
-    battery: 85, // Заряд батареи датчика двери можно также обновлять из eWeLink
+    battery: 85,
     lamp1: false,
     lamp2: false,
     fan: false,
@@ -111,25 +117,48 @@ mqttClient.on('error', (err) => {
     console.error('[MQTT] Ошибка подключения:', err.message);
 });
 
-// --- Интеграция с eWeLink (WebSocket) ---
+// --- Интеграция с eWeLink через WebSocket ---
 async function initEwelink() {
     try {
-        console.log('[eWeLink] Вход в аккаунт...');
-// Вызываем login как статический метод класса, передавая учетные данные
-        const loginData = await ewelink.login(EWELINK_EMAIL, EWELINK_PASSWORD, EWELINK_REGION);
-        console.log('[eWeLink] Успешный вход. Открытие WebSocket...');
-        console.log('[eWeLink] Успешный вход. Открытие WebSocket...');
+        console.log('[eWeLink] Попытка входа в аккаунт...');
+        // Авторизация с использованием email и пароля
+        const loginResponse = await ewelinkClient.user.login({
+            account: EWELINK_ACCOUNT,
+            password: EWELINK_PASSWORD,
+            areaCode: EWELINK_AREA_CODE
+        });
 
-        // Открываем WebSocket для получения событий в реальном времени
-        await ewelinkConnection.openWebSocket(async (data) => {
-            // data - это сообщение от eWeLink
-            if (data && data.action === 'update' && data.params) {
-                const params = data.params;
+        if (loginResponse.error !== 0) {
+            throw new Error(`Ошибка входа: ${JSON.stringify(loginResponse)}`);
+        }
+        console.log('[eWeLink] Успешный вход. Пользователь:', loginResponse.data.user.email);
+
+        // Создаем WebSocket-клиент для получения событий
+        const wsClient = new eWeLink.Ws({
+            appId: EWELINK_APP_ID,
+            appSecret: EWELINK_APP_SECRET,
+            region: EWELINK_REGION
+        });
+
+        // Подключаемся к WebSocket
+        const ws = await wsClient.Connect.create({
+            appId: wsClient.appId,
+            at: wsClient.at,
+            region: EWELINK_REGION,
+            userApiKey: wsClient.userApiKey
+        });
+
+        console.log('[eWeLink] WebSocket подключен. Ожидание событий...');
+
+        // Обработка входящих сообщений
+        ws.on('message', (data) => {
+            const msg = JSON.parse(data);
+            // Ищем обновления, связанные с датчиками
+            if (msg.action === 'update' && msg.params) {
+                const params = msg.params;
                 let changed = false;
 
-                // Проверяем, относится ли обновление к датчику двери.
-                // Параметр может называться 'door', 'contact' или 'switch' в зависимости от модели.
-                // Для DW2-WIFI обычно используется 'door' или 'contact'.
+                // Проверяем параметры, характерные для датчика двери (DW2-WIFI)
                 if (params.door !== undefined) {
                     systemState.door = (params.door === 1 || params.door === 'on' || params.door === true);
                     changed = true;
@@ -137,12 +166,11 @@ async function initEwelink() {
                     systemState.door = (params.contact === 1 || params.contact === 'on' || params.contact === true);
                     changed = true;
                 } else if (params.switch !== undefined) {
-                    // На случай, если датчик представляет себя как переключатель
                     systemState.door = (params.switch === 'on');
                     changed = true;
                 }
 
-                // Обновление заряда батареи (если eWeLink присылает эту информацию)
+                // Обновляем заряд батареи, если он пришел
                 if (params.battery !== undefined) {
                     systemState.battery = params.battery;
                     changed = true;
@@ -155,10 +183,9 @@ async function initEwelink() {
             }
         });
 
-        console.log('[eWeLink] WebSocket подключен. Ожидание событий...');
     } catch (error) {
         console.error('[eWeLink] Ошибка инициализации:', error.message);
-        // Попытка переподключения через 30 секунд
+        // Повторная попытка через 30 секунд
         setTimeout(initEwelink, 30000);
     }
 }
@@ -176,7 +203,6 @@ function sendTo(ws, msg) {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
 }
 
-// --- Управление MQTT (без изменений) ---
 function handleChannelToggle(channelNumber, currentState) {
     const topic = `cmnd/${MQTT_TOPIC_SONOFF}/POWER${channelNumber}`;
     const payload = currentState ? 'OFF' : 'ON';
@@ -184,7 +210,7 @@ function handleChannelToggle(channelNumber, currentState) {
     mqttClient.publish(topic, payload);
 }
 
-// --- REST endpoints (без изменений) ---
+// --- REST endpoints ---
 app.get('/api/state', (req, res) => res.json(systemState));
 app.get('/api/health', (req, res) => {
     res.json({
@@ -192,7 +218,6 @@ app.get('/api/health', (req, res) => {
         clients: wss.clients.size,
         uptime: process.uptime(),
         mqtt: mqttClient.connected ? 'connected' : 'disconnected',
-        ewelink: ewelinkConnection.isOpen ? 'connected' : 'disconnected',
     });
 });
 app.get('/api/pi', (req, res) => {
@@ -210,7 +235,7 @@ app.get('/api/pi', (req, res) => {
     });
 });
 
-// --- WebSocket сервер (без изменений в обработке команд) ---
+// --- WebSocket сервер ---
 wss.on('connection', (ws) => {
     ws.isAlive = true;
     ws.on('pong', () => { ws.isAlive = true; });
@@ -277,8 +302,6 @@ wss.on('connection', (ws) => {
                     broadcastState();
                     setTimeout(() => { systemState.smoke = false; broadcastState(); }, 5000);
                     break;
-                // Симуляция двери больше не нужна, если датчик реальный.
-                // Но можно оставить для тестов.
                 case 'TRIGGER_DOOR':
                     systemState.door = !systemState.door;
                     broadcastState();
@@ -298,7 +321,7 @@ wss.on('connection', (ws) => {
     ws.on('close', () => console.log('[WS] клиент отключен'));
 });
 
-// --- Reaper для мертвых клиентов (без изменений) ---
+// --- Reaper для мертвых клиентов ---
 setInterval(() => {
     wss.clients.forEach((ws) => {
         if (ws.isAlive === false) return ws.terminate();
