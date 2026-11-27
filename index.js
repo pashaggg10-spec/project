@@ -68,34 +68,35 @@ const systemState = {
 
 // --- Инициализация GPIO (через pigpio) ---
 function initGpio() {
-    console.log('[GPIO] Инициализация датчиков через pigpio...');
+    console.log('[GPIO] Инициализация датчиков через pigpio (alert-метод)...');
 
     try {
+        // Настраиваем пин движения как вход с подтяжкой к земле
         const motionSensor = new Gpio(PIN_MOTION, {
             mode: Gpio.INPUT,
-            pullUpDown: Gpio.PUD_DOWN,
-            edge: Gpio.EITHER_EDGE
+            pullUpDown: Gpio.PUD_DOWN
         });
 
-        motionSensor.on('interrupt', (level) => {
+        // Используем метод 'alert' вместо 'interrupt'
+        motionSensor.on('alert', (level) => {
             systemState.motion = (level === 1);
             console.log(`[GPIO] Датчик движения: ${systemState.motion ? 'ДВИЖЕНИЕ' : 'ПОКОЙ'}`);
             broadcastState();
         });
 
+        // Настраиваем пин света аналогичным образом
         const lightSensor = new Gpio(PIN_LIGHT, {
             mode: Gpio.INPUT,
-            pullUpDown: Gpio.PUD_DOWN,
-            edge: Gpio.EITHER_EDGE
+            pullUpDown: Gpio.PUD_DOWN
         });
 
-        lightSensor.on('interrupt', (level) => {
+        lightSensor.on('alert', (level) => {
             systemState.light = (level === 1);
             console.log(`[GPIO] Датчик света: ${systemState.light ? 'СВЕТЛО' : 'ТЕМНО'}`);
             broadcastState();
         });
 
-        console.log('[GPIO] Датчики успешно инициализированы!');
+        console.log('[GPIO] Датчики успешно инициализированы (alert)!');
     } catch (err) {
         console.error('[GPIO] Критическая ошибка инициализации:', err.message);
     }
@@ -338,8 +339,8 @@ function cleanupGpio() {
     try {
         const motionSensor = new Gpio(PIN_MOTION, { mode: Gpio.INPUT });
         const lightSensor = new Gpio(PIN_LIGHT, { mode: Gpio.INPUT });
-        motionSensor.disableInterrupt();
-        lightSensor.disableInterrupt();
+        motionSensor.disableAlert();
+        lightSensor.disableAlert();
         console.log('[GPIO] Пины освобождены.');
     } catch (e) {}
 }
