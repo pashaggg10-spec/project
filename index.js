@@ -8,8 +8,8 @@ import { fileURLToPath } from 'url';
 import { WebSocketServer, WebSocket } from 'ws';
 import mqtt from 'mqtt';
 import eWeLink from 'ewelink-api-next';
-// Используем новую библиотеку для работы с GPIO
-import { Gpio } from '@iiot2k/gpiox';
+// Исправленный импорт: используем функциональный API
+import gpiox from '@iiot2k/gpiox';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -27,17 +27,16 @@ const MQTT_TOPIC_RGB = 'rgb_strip';
 const MQTT_TOPIC_LOCK = 'smart_lock';
 
 // --- Конфигурация eWeLink ---
-const EWELINK_APP_ID = process.env.EWELINK_APP_ID || 'Kh6th5xrkBgAgI5Jj17TBn9R3WjAE7CF';
-const EWELINK_APP_SECRET = process.env.EWELINK_APP_SECRET || '7brXbp7Vi3AcxOIUQjB4gdITbinOjbId';
+const EWELINK_APP_ID = process.env.EWELINK_APP_ID || '7brXbp7Vi3AcxOIUQjB4gdITbinOjbId';
+const EWELINK_APP_SECRET = process.env.EWELINK_APP_SECRET || 'Kh6th5xrkBgAgI5Jj17TBn9R3WjAE7CF';
 const EWELINK_REGION = process.env.EWELINK_REGION || 'eu';
 const EWELINK_ACCOUNT = process.env.EWELINK_EMAIL;
 const EWELINK_PASSWORD = process.env.EWELINK_PASSWORD;
-// Теперь код региона должен корректно подтягиваться из static.env
 const EWELINK_AREA_CODE = process.env.EWELINK_AREA_CODE || '+372'; 
 
 // --- Конфигурация GPIO ---
-const PIN_MOTION = 17; // GPIO 17 (физический пин 11)
-const PIN_LIGHT = 27;  // GPIO 27 (физический пин 13)
+const PIN_MOTION = 17; 
+const PIN_LIGHT = 27;  
 
 const ewelinkClient = new eWeLink.WebAPI({
     appId: EWELINK_APP_ID,
@@ -54,8 +53,8 @@ const systemState = {
     temperature: 24.5,
     motion: false,
     light: false, 
-    smoke: false, // Симуляция
-    door: false,  // Симуляция / eWeLink
+    smoke: false, 
+    door: false,  
     lock: false,
     battery: 85,
     lamp1: false,
@@ -67,42 +66,41 @@ const systemState = {
     lastUpdate: Date.now(),
 };
 
-// --- Инициализация GPIO ---
-let motionSensor;
-let lightSensor;
-
+// --- Инициализация GPIO через @iiot2k/gpiox ---
 function initGpio() {
-    try {
-        // Инициализируем пины на вход (in) с отслеживанием изменения состояния (both)
-        motionSensor = new Gpio(PIN_MOTION, 'in', 'both');
-        lightSensor = new Gpio(PIN_LIGHT, 'in', 'both');
+    console.log('[GPIO] Инициализация датчиков через @iiot2k/gpiox...');
 
-        console.log(`[GPIO] Датчики инициализированы на пинах ${PIN_MOTION} и ${PIN_LIGHT}`);
+    // Настраиваем пины как входы с подтяжкой к земле (PULLDOWN)
+    // Время подавления дребезга (setval) = 0 (отключено)
+    const mode = gpiox.GPIO_MODE_INPUT_PULLDOWN;
+    const edge = gpiox.GPIO_EDGE_BOTH; // Реагировать на оба фронта (0->1 и 1->0)
 
-        // Обработчик датчика движения
-        motionSensor.watch((err, value) => {
-            if (err) return console.error('[GPIO] Ошибка датчика движения:', err);
-            const isMotion = value === 1;
+    // Инициализация пина движения
+    if (!gpiox.init_gpio(PIN_MOTION, mode, 0)) {
+        console.error(`[GPIO] Ошибка инициализации пина ${PIN_MOTION}:`, gpiox.error_text());
+    } else {
+        gpiox.watch_gpio(PIN_MOTION, mode, 0, edge, (state, edge_type, pin) => {
+            const isMotion = (state === 1);
             if (systemState.motion !== isMotion) {
                 systemState.motion = isMotion;
                 console.log(`[GPIO] Датчик движения: ${isMotion ? 'ДВИЖЕНИЕ' : 'ПОКОЙ'}`);
                 broadcastState();
             }
         });
+    }
 
-        // Обработчик датчика света
-        lightSensor.watch((err, value) => {
-            if (err) return console.error('[GPIO] Ошибка датчика света:', err);
-            const isLight = value === 1;
+    // Инициализация пина освещенности
+    if (!gpiox.init_gpio(PIN_LIGHT, mode, 0)) {
+        console.error(`[GPIO] Ошибка инициализации пина ${PIN_LIGHT}:`, gpiox.error_text());
+    } else {
+        gpiox.watch_gpio(PIN_LIGHT, mode, 0, edge, (state, edge_type, pin) => {
+            const isLight = (state === 1);
             if (systemState.light !== isLight) {
                 systemState.light = isLight;
                 console.log(`[GPIO] Датчик света: ${isLight ? 'СВЕТЛО' : 'ТЕМНО'}`);
                 broadcastState();
             }
         });
-
-    } catch (error) {
-        console.error('[GPIO] Не удалось инициализировать GPIO. Проверьте права (sudo) и пины.', error);
     }
 }
 
@@ -357,19 +355,20 @@ server.listen(PORT, '0.0.0.0', () => {
     if (lanIp) console.log(`[Server] Network: http://${lanIp}:${PORT}`);
     console.log('==============================================');
 
-    // Инициализация датчиков
     initGpio();
-    // Инициализация eWeLink
     initEwelink();
 });
 
 // --- Очистка пинов при выключении ---
 function cleanupGpio() {
+    console.log('[Server] Очистка GPIO...');
     try {
-        if (motionSensor) motionSensor.unexport();
-        if (lightSensor) lightSensor.unexport();
+        gpiox.deinit_gpio(PIN_MOTION);
+        gpiox.deinit_gpio(PIN_LIGHT);
         console.log('[GPIO] Пины освобождены.');
-    } catch (e) {}
+    } catch (e) {
+        console.error('[GPIO] Ошибка при очистке:', e);
+    }
 }
 
 process.on('SIGTERM', () => {
