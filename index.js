@@ -8,10 +8,9 @@ import { fileURLToPath } from 'url';
 import { WebSocketServer, WebSocket } from 'ws';
 import mqtt from 'mqtt';
 import eWeLink from 'ewelink-api-next';
-// Используем rpi-gpio вместо onoff
-import gpio from 'rpi-gpio';
+// Используем новую библиотеку для работы с GPIO
+import { Gpio } from '@iiot2k/gpiox';
 
-// Получаем __dirname для ES-модулей
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -27,15 +26,16 @@ const MQTT_TOPIC_SONOFF = 'sonoff4ch';
 const MQTT_TOPIC_RGB = 'rgb_strip';
 const MQTT_TOPIC_LOCK = 'smart_lock';
 
-// --- Конфигурация eWeLink (Взято из вашего кода) ---
+// --- Конфигурация eWeLink ---
 const EWELINK_APP_ID = process.env.EWELINK_APP_ID || 'Kh6th5xrkBgAgI5Jj17TBn9R3WjAE7CF';
 const EWELINK_APP_SECRET = process.env.EWELINK_APP_SECRET || '7brXbp7Vi3AcxOIUQjB4gdITbinOjbId';
 const EWELINK_REGION = process.env.EWELINK_REGION || 'eu';
 const EWELINK_ACCOUNT = process.env.EWELINK_EMAIL;
 const EWELINK_PASSWORD = process.env.EWELINK_PASSWORD;
-const EWELINK_AREA_CODE = process.env.EWELINK_AREA_CODE || '+372';
+// Теперь код региона должен корректно подтягиваться из static.env
+const EWELINK_AREA_CODE = process.env.EWELINK_AREA_CODE || '+372'; 
 
-// --- Конфигурация GPIO (Распиновка) ---
+// --- Конфигурация GPIO ---
 const PIN_MOTION = 17; // GPIO 17 (физический пин 11)
 const PIN_LIGHT = 27;  // GPIO 27 (физический пин 13)
 
@@ -67,37 +67,43 @@ const systemState = {
     lastUpdate: Date.now(),
 };
 
-// --- Инициализация GPIO через rpi-gpio ---
+// --- Инициализация GPIO ---
+let motionSensor;
+let lightSensor;
+
 function initGpio() {
-    console.log('[GPIO] Инициализация датчиков...');
-    
-    // Настраиваем пины на вход (DIR_IN) с отслеживанием обоих состояний (EDGE_BOTH)
-    gpio.setup(PIN_MOTION, gpio.DIR_IN, gpio.EDGE_BOTH, (err) => {
-        if (err) console.error(`[GPIO] Ошибка настройки пина ${PIN_MOTION}:`, err.message);
-    });
-    
-    gpio.setup(PIN_LIGHT, gpio.DIR_IN, gpio.EDGE_BOTH, (err) => {
-        if (err) console.error(`[GPIO] Ошибка настройки пина ${PIN_LIGHT}:`, err.message);
-    });
+    try {
+        // Инициализируем пины на вход (in) с отслеживанием изменения состояния (both)
+        motionSensor = new Gpio(PIN_MOTION, 'in', 'both');
+        lightSensor = new Gpio(PIN_LIGHT, 'in', 'both');
 
-    // Слушаем изменения на пинах
-    gpio.on('change', (channel, value) => {
-        let changed = false;
-        
-        if (channel === PIN_MOTION) {
-            systemState.motion = (value === true);
-            changed = true;
-            console.log(`[GPIO] Датчик движения: ${value ? 'ДВИЖЕНИЕ' : 'ПОКОЙ'}`);
-        }
-        
-        if (channel === PIN_LIGHT) {
-            systemState.light = (value === true);
-            changed = true;
-            console.log(`[GPIO] Датчик света: ${value ? 'СВЕТЛО' : 'ТЕМНО'}`);
-        }
+        console.log(`[GPIO] Датчики инициализированы на пинах ${PIN_MOTION} и ${PIN_LIGHT}`);
 
-        if (changed) broadcastState();
-    });
+        // Обработчик датчика движения
+        motionSensor.watch((err, value) => {
+            if (err) return console.error('[GPIO] Ошибка датчика движения:', err);
+            const isMotion = value === 1;
+            if (systemState.motion !== isMotion) {
+                systemState.motion = isMotion;
+                console.log(`[GPIO] Датчик движения: ${isMotion ? 'ДВИЖЕНИЕ' : 'ПОКОЙ'}`);
+                broadcastState();
+            }
+        });
+
+        // Обработчик датчика света
+        lightSensor.watch((err, value) => {
+            if (err) return console.error('[GPIO] Ошибка датчика света:', err);
+            const isLight = value === 1;
+            if (systemState.light !== isLight) {
+                systemState.light = isLight;
+                console.log(`[GPIO] Датчик света: ${isLight ? 'СВЕТЛО' : 'ТЕМНО'}`);
+                broadcastState();
+            }
+        });
+
+    } catch (error) {
+        console.error('[GPIO] Не удалось инициализировать GPIO. Проверьте права (sudo) и пины.', error);
+    }
 }
 
 // --- MQTT соединение ---
@@ -118,34 +124,17 @@ mqttClient.on('message', (topic, message) => {
     console.log(`[MQTT] Получено: ${topic} -> ${msg}`);
     let changed = false;
 
-    if (topic === `stat/${MQTT_TOPIC_SONOFF}/POWER1`) {
-        systemState.fan = (msg === 'ON');
-        changed = true;
-    }
-    if (topic === `stat/${MQTT_TOPIC_SONOFF}/POWER2`) {
-        systemState.lamp1 = (msg === 'ON');
-        changed = true;
-    }
-    if (topic === `stat/${MQTT_TOPIC_SONOFF}/POWER3`) {
-        systemState.lamp2 = (msg === 'ON');
-        changed = true;
-    }
-    if (topic === `stat/${MQTT_TOPIC_RGB}/POWER`) {
-        systemState.rgbPower = (msg === 'ON');
-        changed = true;
-    }
+    if (topic === `stat/${MQTT_TOPIC_SONOFF}/POWER1`) { systemState.fan = (msg === 'ON'); changed = true; }
+    if (topic === `stat/${MQTT_TOPIC_SONOFF}/POWER2`) { systemState.lamp1 = (msg === 'ON'); changed = true; }
+    if (topic === `stat/${MQTT_TOPIC_SONOFF}/POWER3`) { systemState.lamp2 = (msg === 'ON'); changed = true; }
+    if (topic === `stat/${MQTT_TOPIC_RGB}/POWER`) { systemState.rgbPower = (msg === 'ON'); changed = true; }
+    if (topic === `stat/${MQTT_TOPIC_LOCK}/POWER`) { systemState.lock = (msg === 'ON'); changed = true; }
+    
     if (topic === `stat/${MQTT_TOPIC_RGB}/RESULT` && msg.includes('Color')) {
         try {
             const data = JSON.parse(msg);
-            if (data.Color) {
-                systemState.rgbColor = '#' + data.Color;
-                changed = true;
-            }
+            if (data.Color) { systemState.rgbColor = '#' + data.Color; changed = true; }
         } catch(e) {}
-    }
-    if (topic === `stat/${MQTT_TOPIC_LOCK}/POWER`) {
-        systemState.lock = (msg === 'ON');
-        changed = true;
     }
 
     if (changed) broadcastState();
@@ -368,7 +357,7 @@ server.listen(PORT, '0.0.0.0', () => {
     if (lanIp) console.log(`[Server] Network: http://${lanIp}:${PORT}`);
     console.log('==============================================');
 
-    // Инициализация датчиков при старте
+    // Инициализация датчиков
     initGpio();
     // Инициализация eWeLink
     initEwelink();
@@ -376,11 +365,11 @@ server.listen(PORT, '0.0.0.0', () => {
 
 // --- Очистка пинов при выключении ---
 function cleanupGpio() {
-    console.log('[Server] Очистка GPIO...');
-    gpio.destroy((err) => {
-        if (err) console.error('[GPIO] Ошибка при очистке:', err);
-        else console.log('[GPIO] Пины освобождены.');
-    });
+    try {
+        if (motionSensor) motionSensor.unexport();
+        if (lightSensor) lightSensor.unexport();
+        console.log('[GPIO] Пины освобождены.');
+    } catch (e) {}
 }
 
 process.on('SIGTERM', () => {
