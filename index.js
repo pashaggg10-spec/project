@@ -8,7 +8,6 @@ import { fileURLToPath } from 'url';
 import { WebSocketServer, WebSocket } from 'ws';
 import mqtt from 'mqtt';
 import eWeLink from 'ewelink-api-next';
-// Исправленный импорт: используем функциональный API
 import gpiox from '@iiot2k/gpiox';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -26,17 +25,18 @@ const MQTT_TOPIC_SONOFF = 'sonoff4ch';
 const MQTT_TOPIC_RGB = 'rgb_strip';
 const MQTT_TOPIC_LOCK = 'smart_lock';
 
-// --- Конфигурация eWeLink ---
-const EWELINK_APP_ID = process.env.EWELINK_APP_ID || '7brXbp7Vi3AcxOIUQjB4gdITbinOjbId';
-const EWELINK_APP_SECRET = process.env.EWELINK_APP_SECRET || 'Kh6th5xrkBgAgI5Jj17TBn9R3WjAE7CF';
+// --- Конфигурация eWeLink (ПРАВИЛЬНЫЕ КЛЮЧИ С САЙТА) ---
+const EWELINK_APP_ID = process.env.EWELINK_APP_ID || 'Kh6th5xrkBgAgI5Jj17TBn9R3WjAE7CF';
+const EWELINK_APP_SECRET = process.env.EWELINK_APP_SECRET || '7brXbp7Vi3AcxOIUQjB4gdITbinOjbId';
 const EWELINK_REGION = process.env.EWELINK_REGION || 'eu';
-const EWELINK_ACCOUNT = process.env.EWELINK_EMAIL;
-const EWELINK_PASSWORD = process.env.EWELINK_PASSWORD;
-const EWELINK_AREA_CODE = process.env.EWELINK_AREA_CODE || '+372'; 
+
+// URL для перенаправления после входа (должен быть прописан в настройках приложения на dev.ewelink.cc)
+const EWELINK_REDIRECT_URL = `http://192.168.15.138:${PORT}/oauth/callback`;
 
 // --- Конфигурация GPIO ---
 const PIN_MOTION = 17; 
 const PIN_LIGHT = 27;  
+const GPIO_CHIP = 512; // Используем чип 512 (как на вашем скриншоте)
 
 const ewelinkClient = new eWeLink.WebAPI({
     appId: EWELINK_APP_ID,
@@ -66,20 +66,17 @@ const systemState = {
     lastUpdate: Date.now(),
 };
 
-// --- Инициализация GPIO через @iiot2k/gpiox ---
+// --- Инициализация GPIO ---
 function initGpio() {
-    console.log('[GPIO] Инициализация датчиков через @iiot2k/gpiox...');
-
-    // Настраиваем пины как входы с подтяжкой к земле (PULLDOWN)
-    // Время подавления дребезга (setval) = 0 (отключено)
+    console.log('[GPIO] Инициализация датчиков...');
     const mode = gpiox.GPIO_MODE_INPUT_PULLDOWN;
-    const edge = gpiox.GPIO_EDGE_BOTH; // Реагировать на оба фронта (0->1 и 1->0)
+    const edge = gpiox.GPIO_EDGE_BOTH;
 
-    // Инициализация пина движения
-    if (!gpiox.init_gpio(PIN_MOTION, mode, 0)) {
-        console.error(`[GPIO] Ошибка инициализации пина ${PIN_MOTION}:`, gpiox.error_text());
+    // Инициализация датчика движения (пин 17)
+    if (!gpiox.init_gpio(PIN_MOTION, mode, GPIO_CHIP)) {
+        console.error(`[GPIO] Ошибка инициализации пина ${PIN_MOTION}: ${gpiox.error_text()}`);
     } else {
-        gpiox.watch_gpio(PIN_MOTION, mode, 0, edge, (state, edge_type, pin) => {
+        gpiox.watch_gpio(PIN_MOTION, mode, GPIO_CHIP, edge, (state) => {
             const isMotion = (state === 1);
             if (systemState.motion !== isMotion) {
                 systemState.motion = isMotion;
@@ -89,11 +86,11 @@ function initGpio() {
         });
     }
 
-    // Инициализация пина освещенности
-    if (!gpiox.init_gpio(PIN_LIGHT, mode, 0)) {
-        console.error(`[GPIO] Ошибка инициализации пина ${PIN_LIGHT}:`, gpiox.error_text());
+    // Инициализация датчика света (пин 27)
+    if (!gpiox.init_gpio(PIN_LIGHT, mode, GPIO_CHIP)) {
+        console.error(`[GPIO] Ошибка инициализации пина ${PIN_LIGHT}: ${gpiox.error_text()}`);
     } else {
-        gpiox.watch_gpio(PIN_LIGHT, mode, 0, edge, (state, edge_type, pin) => {
+        gpiox.watch_gpio(PIN_LIGHT, mode, GPIO_CHIP, edge, (state) => {
             const isLight = (state === 1);
             if (systemState.light !== isLight) {
                 systemState.light = isLight;
@@ -142,21 +139,48 @@ mqttClient.on('error', (err) => {
     console.error('[MQTT] Ошибка подключения:', err.message);
 });
 
-// --- Интеграция с eWeLink через WebSocket ---
+// --- Интеграция с eWeLink (Автоматический OAuth 2.0) ---
 async function initEwelink() {
     try {
-        console.log('[eWeLink] Попытка входа в аккаунт...');
-        const loginResponse = await ewelinkClient.user.login({
-            account: EWELINK_ACCOUNT,
-            password: EWELINK_PASSWORD,
-            areaCode: EWELINK_AREA_CODE
+        console.log('[eWeLink] Генерация ссылки для входа...');
+        const loginUrl = await ewelinkClient.oauth.createLoginUrl({
+            redirectUrl: EWELINK_REDIRECT_URL,
+            state: 'iot-dashboard-auth'
+        });
+        
+        console.log('\n=============================================================');
+        console.log('⚠️ ВНИМАНИЕ! ТРЕБУЕТСЯ АВТОРИЗАЦИЯ eWeLink');
+        console.log('Откройте эту ссылку в браузере:');
+        console.log('\n' + loginUrl + '\n');
+        console.log('После входа сервер автоматически получит токен.');
+        console.log('=============================================================\n');
+
+    } catch (error) {
+        console.error('[eWeLink] Ошибка генерации ссылки:', error.message);
+    }
+}
+
+// Перехватываем редирект от eWeLink после успешного входа
+app.get('/oauth/callback', async (req, res) => {
+    const { code } = req.query;
+    
+    if (!code) {
+        return res.send('Ошибка: код авторизации не получен.');
+    }
+
+    try {
+        console.log('[eWeLink] Получен код авторизации! Обмен на токен...');
+        const tokenResponse = await ewelinkClient.oauth.requestToken({
+            code: code,
+            redirectUrl: EWELINK_REDIRECT_URL
         });
 
-        if (loginResponse.error !== 0) {
-            throw new Error(`Ошибка входа: ${JSON.stringify(loginResponse)}`);
+        if (tokenResponse.error !== 0) {
+            throw new Error(JSON.stringify(tokenResponse));
         }
-        console.log('[eWeLink] Успешный вход. Пользователь:', loginResponse.data.user.email);
 
+        console.log('[eWeLink] Успешный вход! Настройка WebSocket...');
+        
         const wsClient = new eWeLink.Ws({
             appId: EWELINK_APP_ID,
             appSecret: EWELINK_APP_SECRET,
@@ -178,21 +202,11 @@ async function initEwelink() {
                 const params = msg.params;
                 let changed = false;
 
-                if (params.door !== undefined) {
-                    systemState.door = (params.door === 1 || params.door === 'on' || params.door === true);
-                    changed = true;
-                } else if (params.contact !== undefined) {
-                    systemState.door = (params.contact === 1 || params.contact === 'on' || params.contact === true);
-                    changed = true;
-                } else if (params.switch !== undefined) {
-                    systemState.door = (params.switch === 'on');
-                    changed = true;
-                }
+                if (params.door !== undefined) { systemState.door = (params.door === 1 || params.door === 'on'); changed = true; }
+                else if (params.contact !== undefined) { systemState.door = (params.contact === 1 || params.contact === 'on'); changed = true; }
+                else if (params.switch !== undefined) { systemState.door = (params.switch === 'on'); changed = true; }
 
-                if (params.battery !== undefined) {
-                    systemState.battery = params.battery;
-                    changed = true;
-                }
+                if (params.battery !== undefined) { systemState.battery = params.battery; changed = true; }
 
                 if (changed) {
                     console.log('[eWeLink] Обновление от датчика:', params);
@@ -201,11 +215,13 @@ async function initEwelink() {
             }
         });
 
+        res.send('<h1>Успешно!</h1><p>Авторизация eWeLink завершена. Можете закрыть эту вкладку и вернуться в дашборд.</p>');
+
     } catch (error) {
-        console.error('[eWeLink] Ошибка инициализации:', error.message);
-        setTimeout(initEwelink, 30000);
+        console.error('[eWeLink] Ошибка при получении токена:', error.message);
+        res.status(500).send('<h1>Ошибка авторизации</h1><p>Проверьте консоль сервера (терминал).</p>');
     }
-}
+});
 
 // --- Вспомогательные функции ---
 function broadcastState() {
@@ -309,12 +325,12 @@ wss.on('connection', (ws) => {
                     broadcastState();
                     break;
                 }
-                case 'TRIGGER_SMOKE': // Симуляция дыма
+                case 'TRIGGER_SMOKE': 
                     systemState.smoke = true;
                     broadcastState();
                     setTimeout(() => { systemState.smoke = false; broadcastState(); }, 5000);
                     break;
-                case 'TRIGGER_DOOR': // Симуляция двери
+                case 'TRIGGER_DOOR': 
                     systemState.door = !systemState.door;
                     broadcastState();
                     break;
@@ -366,9 +382,7 @@ function cleanupGpio() {
         gpiox.deinit_gpio(PIN_MOTION);
         gpiox.deinit_gpio(PIN_LIGHT);
         console.log('[GPIO] Пины освобождены.');
-    } catch (e) {
-        console.error('[GPIO] Ошибка при очистке:', e);
-    }
+    } catch (e) {}
 }
 
 process.on('SIGTERM', () => {
