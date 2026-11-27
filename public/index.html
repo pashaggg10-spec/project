@@ -174,6 +174,12 @@
             animation: pulse 1.2s infinite;
         }
 
+        /* Стили для датчика света */
+        .card-light.bright {
+            border-color: var(--accent-amber);
+            background-color: rgba(245, 158, 11, 0.15);
+        }
+
         .card-pi .card-value { font-size: 1.4rem; }
 
         @keyframes pulse {
@@ -319,13 +325,22 @@
             <div class="card-subtext" id="val-battery">Battery: -- %</div>
         </div>
 
-        <!-- Motion -->
-        <div class="card card-motion" id="card-motion" onclick="triggerMotionSimulation()">
+        <!-- Motion (Hardware) -->
+        <div class="card card-motion" id="card-motion">
             <div class="card-header">
                 <span class="card-title">Motion Sensor</span>
                 <span>🏃</span>
             </div>
             <div class="card-value" id="val-motion">No Motion</div>
+        </div>
+
+        <!-- Light (Hardware) -->
+        <div class="card card-light" id="card-light">
+            <div class="card-header">
+                <span class="card-title">Light Sensor</span>
+                <span id="light-icon">☀️</span>
+            </div>
+            <div class="card-value" id="val-light">--</div>
         </div>
 
         <!-- Smoke -->
@@ -508,6 +523,16 @@
             motionCard.classList.toggle('detected', !!state.motion);
             motionVal.innerText = state.motion ? 'Motion Detected!' : 'No Motion';
 
+            // Light (Hardware)
+            const lightCard = document.getElementById('card-light');
+            const lightVal = document.getElementById('val-light');
+            const lightIcon = document.getElementById('light-icon');
+            
+            // Предполагаем, что true = светло, false = темно
+            lightCard.classList.toggle('bright', !!state.light);
+            lightVal.innerText = state.light ? 'Bright' : 'Dark';
+            lightIcon.innerText = state.light ? '☀️' : '🌙';
+
             // Smoke
             const smokeCard = document.getElementById('card-smoke');
             const smokeVal = document.getElementById('val-smoke');
@@ -583,7 +608,7 @@
             sendCommand('TOGGLE_LOCK');
         }
 
-        function triggerMotionSimulation() { sendCommand('TRIGGER_MOTION'); }
+        // Оставил симуляцию для дыма и двери (если они не подключены к GPIO)
         function triggerSmokeSimulation()  { sendCommand('TRIGGER_SMOKE'); }
         function triggerDoorSimulation()   { sendCommand('TRIGGER_DOOR'); }
 
