@@ -33,7 +33,7 @@ const EWELINK_APP_ID = process.env.EWELINK_APP_ID || 'Kh6th5xrkBgAgI5Jj17TBn9R3W
 const EWELINK_APP_SECRET = process.env.EWELINK_APP_SECRET || '7brXbp7Vi3AcxOIUQjB4gdITbinOjbId';
 const EWELINK_REGION = process.env.EWELINK_REGION || 'eu';
 
-// ИСПРАВЛЕНИЕ: Используем localhost, раз браузер открывается на малинке
+// Используем localhost для редиректа
 const EWELINK_REDIRECT_URL = `http://localhost:${PORT}/oauth/callback`;
 
 // --- Конфигурация GPIO ---
@@ -160,21 +160,31 @@ app.get('/oauth/callback', async (req, res) => {
     }
 
     try {
-        console.log('[eWeLink] Получен код авторизации! Обмен на токен...');
+        console.log('[eWeLink] Получен код авторизации! Обмен на токен через прямой запрос...');
         
-        const tokenResponse = await ewelinkClient.oauth.requestToken({
-            code: code,
-            redirectUrl: EWELINK_REDIRECT_URL,
-            grantType: 'authorization_code'
+        // Прямой запрос к API eWeLink (обходим баг библиотеки)
+        const response = await fetch('https://api.coolkit.cc/v2/user/oauth/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                clientId: EWELINK_APP_ID,
+                clientSecret: EWELINK_APP_SECRET,
+                grantType: 'authorization_code',
+                code: code,
+                redirectUrl: EWELINK_REDIRECT_URL
+            })
         });
 
-        if (tokenResponse.error !== 0) {
-            throw new Error(`Ошибка получения токена: ${JSON.stringify(tokenResponse)}`);
+        const tokenData = await response.json();
+
+        if (tokenData.error !== 0) {
+            throw new Error(`Ошибка API eWeLink: ${JSON.stringify(tokenData)}`);
         }
         
         console.log('[eWeLink] Успешный вход! Токен получен.');
         
-        await connectEwelinkWebSocket(tokenResponse.data);
+        // Передаем полученные данные в функцию подключения WebSocket
+        await connectEwelinkWebSocket(tokenData.data);
 
         res.send('<h1>Успешно!</h1><p>Авторизация eWeLink завершена. Можете закрыть эту вкладку и вернуться в дашборд.</p>');
 
@@ -191,11 +201,12 @@ async function connectEwelinkWebSocket(tokenData) {
         region: EWELINK_REGION
     });
 
+    // В OAuth v2 API ключи могут отличаться от старого логина
     const ws = await wsClient.Connect.create({
-        appId: wsClient.appId,
+        appId: EWELINK_APP_ID,
         at: tokenData.at,
         region: EWELINK_REGION,
-        userApiKey: tokenData.userApiKey
+        userApiKey: tokenData.user?.apikey || tokenData.userApiKey || ''
     });
 
     console.log('[eWeLink] WebSocket подключен. Ожидание событий...');
