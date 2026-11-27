@@ -13,7 +13,7 @@ import dotenv from 'dotenv';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// === ИСПРАВЛЕНИЕ 1: Явно указываем файл static.env ===
+// Загружаем настройки из static.env
 dotenv.config({ path: path.resolve(__dirname, 'static.env') });
 
 const app = express();
@@ -29,25 +29,17 @@ const MQTT_TOPIC_RGB = 'rgb_strip';
 const MQTT_TOPIC_LOCK = 'smart_lock';
 
 // --- Конфигурация eWeLink ---
-const EWELINK_APP_ID = 'Kh6th5xrkBgAgI5Jj17TBn9R3WjAE7CF';
-const EWELINK_APP_SECRET = '7brXbp7Vi3AcxOIUQjB4gdITbinOjbId';
-
-// Теперь эти переменные точно загрузятся из static.env
-const EWELINK_EMAIL = process.env.EWELINK_EMAIL;
-const EWELINK_PASSWORD = process.env.EWELINK_PASSWORD;
+const EWELINK_APP_ID = process.env.EWELINK_APP_ID || 'Kh6th5xrkBgAgI5Jj17TBn9R3WjAE7CF';
+const EWELINK_APP_SECRET = process.env.EWELINK_APP_SECRET || '7brXbp7Vi3AcxOIUQjB4gdITbinOjbId';
 const EWELINK_REGION = process.env.EWELINK_REGION || 'eu';
-const EWELINK_AREA_CODE = process.env.EWELINK_AREA_CODE || '+372';
 
-// Выводим для проверки, что данные загрузились
-console.log('[ENV CHECK] Email:', EWELINK_EMAIL);
-console.log('[ENV CHECK] AreaCode:', EWELINK_AREA_CODE);
+// ИСПРАВЛЕНИЕ: Используем localhost, раз браузер открывается на малинке
+const EWELINK_REDIRECT_URL = `http://localhost:${PORT}/oauth/callback`;
 
 // --- Конфигурация GPIO ---
 const PIN_MOTION = 17; 
 const PIN_LIGHT = 27;  
-// На Pi 4 (64-bit) часто используется чип 512 или 4. 
-// Если снова будет chip error, попробуйте поменять на 4 или 0.
-const GPIO_CHIP = 512; 
+const GPIO_CHIP = 0; 
 
 const ewelinkClient = new eWeLink.WebAPI({
     appId: EWELINK_APP_ID,
@@ -139,76 +131,108 @@ mqttClient.on('message', (topic, message) => {
 
 mqttClient.on('error', (err) => console.error('[MQTT] Ошибка:', err.message));
 
-// --- Интеграция с eWeLink ---
-async function initEwelink() {
+// --- Авторизация eWeLink через OAuth 2.0 ---
+async function generateLoginUrl() {
     try {
-        if (!EWELINK_EMAIL || !EWELINK_PASSWORD) {
-            throw new Error('Email или пароль не загрузились из static.env!');
-        }
-
-        console.log('[eWeLink] Попытка входа по Email...');
-        const loginResponse = await ewelinkClient.user.login({
-            account: EWELINK_EMAIL,
-            password: EWELINK_PASSWORD,
-            areaCode: EWELINK_AREA_CODE
-        });
-
-        if (loginResponse.error !== 0) {
-            throw new Error(`Ошибка входа: ${JSON.stringify(loginResponse)}`);
-        }
-        console.log('[eWeLink] Успешный вход. Пользователь:', loginResponse.data.user.email);
-
-        const wsClient = new eWeLink.Ws({
-            region: EWELINK_REGION
+        console.log('\n=============================================================');
+        console.log('⚠️ ТРЕБУЕТСЯ АВТОРИЗАЦИЯ eWeLink');
+        console.log('Скопируйте и откройте эту ссылку в браузере на Raspberry Pi:');
+        
+        const loginUrl = await ewelinkClient.oauth.createLoginUrl({
+            redirectUrl: EWELINK_REDIRECT_URL,
+            grantType: 'authorization_code',
+            state: 'iot-dashboard-auth'
         });
         
-        const ws = await wsClient.Connect.create({
-            appId: EWELINK_APP_ID,
-            at: loginResponse.data.at,
-            region: EWELINK_REGION,
-            userApiKey: loginResponse.data.userApiKey
+        console.log('\n' + loginUrl + '\n');
+        console.log('После входа сервер автоматически получит токен.');
+        console.log('=============================================================\n');
+    } catch (error) {
+        console.error('[eWeLink] Ошибка генерации ссылки:', error.message);
+    }
+}
+
+app.get('/oauth/callback', async (req, res) => {
+    const { code } = req.query;
+    
+    if (!code) {
+        return res.status(400).send('Ошибка: код авторизации не получен.');
+    }
+
+    try {
+        console.log('[eWeLink] Получен код авторизации! Обмен на токен...');
+        
+        const tokenResponse = await ewelinkClient.oauth.requestToken({
+            code: code,
+            redirectUrl: EWELINK_REDIRECT_URL,
+            grantType: 'authorization_code'
         });
 
-        console.log('[eWeLink] WebSocket подключен. Ожидание событий...');
+        if (tokenResponse.error !== 0) {
+            throw new Error(`Ошибка получения токена: ${JSON.stringify(tokenResponse)}`);
+        }
+        
+        console.log('[eWeLink] Успешный вход! Токен получен.');
+        
+        await connectEwelinkWebSocket(tokenResponse.data);
 
-        ws.on('message', (data) => {
-            const msg = JSON.parse(data);
-            if (msg.action === 'update' && msg.params) {
-                const params = msg.params;
-                let changed = false;
-
-                if (params.door !== undefined) {
-                    systemState.door = (params.door === 1 || params.door === 'on');
-                    changed = true;
-                } else if (params.contact !== undefined) {
-                    systemState.door = (params.contact === 1 || params.contact === 'on');
-                    changed = true;
-                }
-
-                if (params.temperature !== undefined) {
-                    systemState.temperature = params.temperature;
-                    changed = true;
-                } else if (params.currentTemperature !== undefined) {
-                    systemState.temperature = params.currentTemperature;
-                    changed = true;
-                }
-
-                if (params.battery !== undefined) {
-                    systemState.battery = params.battery;
-                    changed = true;
-                }
-
-                if (changed) {
-                    console.log('[eWeLink] Обновление:', params);
-                    broadcastState();
-                }
-            }
-        });
+        res.send('<h1>Успешно!</h1><p>Авторизация eWeLink завершена. Можете закрыть эту вкладку и вернуться в дашборд.</p>');
 
     } catch (error) {
-        console.error('[eWeLink] Ошибка инициализации:', error.message);
-        setTimeout(initEwelink, 30000); 
+        console.error('[eWeLink] Ошибка при получении токена:', error.message);
+        res.status(500).send('<h1>Ошибка авторизации</h1><p>Проверьте консоль сервера (терминал).</p>');
     }
+});
+
+async function connectEwelinkWebSocket(tokenData) {
+    const wsClient = new eWeLink.Ws({
+        appId: EWELINK_APP_ID,
+        appSecret: EWELINK_APP_SECRET,
+        region: EWELINK_REGION
+    });
+
+    const ws = await wsClient.Connect.create({
+        appId: wsClient.appId,
+        at: tokenData.at,
+        region: EWELINK_REGION,
+        userApiKey: tokenData.userApiKey
+    });
+
+    console.log('[eWeLink] WebSocket подключен. Ожидание событий...');
+
+    ws.on('message', (data) => {
+        const msg = JSON.parse(data);
+        if (msg.action === 'update' && msg.params) {
+            const params = msg.params;
+            let changed = false;
+
+            if (params.door !== undefined) {
+                systemState.door = (params.door === 1 || params.door === 'on');
+                changed = true;
+            } else if (params.contact !== undefined) {
+                systemState.door = (params.contact === 1 || params.contact === 'on');
+                changed = true;
+            }
+
+            if (params.temperature !== undefined) {
+                systemState.temperature = params.temperature;
+                changed = true;
+            } else if (params.currentTemperature !== undefined) {
+                systemState.temperature = params.currentTemperature;
+                changed = true;
+            }
+
+            if (params.battery !== undefined) {
+                systemState.battery = params.battery;
+                changed = true;
+            }
+
+            if (changed) {
+                console.log('[eWeLink] Обновление:', params);
+                broadcastState();
+            }
+        }
+    });
 }
 
 // --- Вспомогательные функции ---
@@ -230,7 +254,6 @@ function handleChannelToggle(channelNumber, currentState) {
     mqttClient.publish(topic, payload);
 }
 
-// --- REST endpoints ---
 app.get('/api/state', (req, res) => res.json(systemState));
 app.get('/api/pi', (req, res) => {
     let tempC = null;
@@ -238,7 +261,6 @@ app.get('/api/pi', (req, res) => {
     res.json({ tempC, uptime: os.uptime(), memFree: os.freemem(), memTotal: os.totalmem() });
 });
 
-// --- WebSocket сервер ---
 wss.on('connection', (ws) => {
     ws.isAlive = true;
     ws.on('pong', () => { ws.isAlive = true; });
@@ -281,7 +303,6 @@ wss.on('connection', (ws) => {
     });
 });
 
-// --- Reaper ---
 setInterval(() => {
     wss.clients.forEach((ws) => {
         if (ws.isAlive === false) return ws.terminate();
@@ -290,14 +311,12 @@ setInterval(() => {
     });
 }, 30000);
 
-// --- Запуск ---
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`[Server] IoT Dashboard запущен. Локально: http://localhost:${PORT}`);
     initGpio();
-    initEwelink();
+    generateLoginUrl(); 
 });
 
-// --- Очистка ---
 function cleanupGpio() {
     try {
         gpiox.deinit_gpio(PIN_MOTION);
