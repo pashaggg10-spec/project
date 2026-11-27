@@ -1,4 +1,3 @@
-import 'dotenv/config';
 import express from 'express';
 import http from 'http';
 import fs from 'fs';
@@ -9,9 +8,13 @@ import { WebSocketServer, WebSocket } from 'ws';
 import mqtt from 'mqtt';
 import eWeLink from 'ewelink-api-next';
 import gpiox from '@iiot2k/gpiox';
+import dotenv from 'dotenv';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// === ИСПРАВЛЕНИЕ 1: Явно указываем файл static.env ===
+dotenv.config({ path: path.resolve(__dirname, 'static.env') });
 
 const app = express();
 const server = http.createServer(app);
@@ -29,15 +32,22 @@ const MQTT_TOPIC_LOCK = 'smart_lock';
 const EWELINK_APP_ID = 'Kh6th5xrkBgAgI5Jj17TBn9R3WjAE7CF';
 const EWELINK_APP_SECRET = '7brXbp7Vi3AcxOIUQjB4gdITbinOjbId';
 
+// Теперь эти переменные точно загрузятся из static.env
 const EWELINK_EMAIL = process.env.EWELINK_EMAIL;
 const EWELINK_PASSWORD = process.env.EWELINK_PASSWORD;
 const EWELINK_REGION = process.env.EWELINK_REGION || 'eu';
 const EWELINK_AREA_CODE = process.env.EWELINK_AREA_CODE || '+372';
 
+// Выводим для проверки, что данные загрузились
+console.log('[ENV CHECK] Email:', EWELINK_EMAIL);
+console.log('[ENV CHECK] AreaCode:', EWELINK_AREA_CODE);
+
 // --- Конфигурация GPIO ---
 const PIN_MOTION = 17; 
 const PIN_LIGHT = 27;  
-const GPIO_CHIP = 512;
+// На Pi 4 (64-bit) часто используется чип 512 или 4. 
+// Если снова будет chip error, попробуйте поменять на 4 или 0.
+const GPIO_CHIP = 512; 
 
 const ewelinkClient = new eWeLink.WebAPI({
     appId: EWELINK_APP_ID,
@@ -69,7 +79,7 @@ const systemState = {
 
 // --- Инициализация GPIO ---
 function initGpio() {
-    console.log('[GPIO] Инициализация датчиков...');
+    console.log(`[GPIO] Инициализация на чипе ${GPIO_CHIP}...`);
     const mode = gpiox.GPIO_MODE_INPUT_PULLDOWN;
     const edge = gpiox.GPIO_EDGE_BOTH;
 
@@ -129,28 +139,22 @@ mqttClient.on('message', (topic, message) => {
 
 mqttClient.on('error', (err) => console.error('[MQTT] Ошибка:', err.message));
 
-// --- Интеграция с eWeLink (с логированием ответа) ---
+// --- Интеграция с eWeLink ---
 async function initEwelink() {
     try {
-        console.log('[eWeLink] Попытка входа по Email...');
-        console.log('[eWeLink] Отправляемые данные:', {
-            account: EWELINK_EMAIL,
-            areaCode: EWELINK_AREA_CODE,
-            region: EWELINK_REGION,
-            appId: EWELINK_APP_ID.substring(0, 8) + '...'
-        });
+        if (!EWELINK_EMAIL || !EWELINK_PASSWORD) {
+            throw new Error('Email или пароль не загрузились из static.env!');
+        }
 
-        // Логируем ответ от сервера до вызова login, чтобы увидеть реальную ошибку
+        console.log('[eWeLink] Попытка входа по Email...');
         const loginResponse = await ewelinkClient.user.login({
             account: EWELINK_EMAIL,
             password: EWELINK_PASSWORD,
             areaCode: EWELINK_AREA_CODE
         });
 
-        console.log('[eWeLink] Ответ сервера:', JSON.stringify(loginResponse, null, 2));
-
         if (loginResponse.error !== 0) {
-            throw new Error(`Ошибка входа (код ${loginResponse.error}): ${loginResponse.msg || 'Неизвестная ошибка'}`);
+            throw new Error(`Ошибка входа: ${JSON.stringify(loginResponse)}`);
         }
         console.log('[eWeLink] Успешный вход. Пользователь:', loginResponse.data.user.email);
 
@@ -203,7 +207,6 @@ async function initEwelink() {
 
     } catch (error) {
         console.error('[eWeLink] Ошибка инициализации:', error.message);
-        console.error('[eWeLink] Полный стек ошибки:', error.stack);
         setTimeout(initEwelink, 30000); 
     }
 }
