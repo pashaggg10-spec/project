@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "dotenv": "^16.4.5",
-    "ewelink-api-next": "^1.0.7",
+    "ewelink-api-next": "^1.0.4",
     "express": "^4.19.2",
     "mqtt": "^5.7.0",
     "ws": "^8.17.0"
