@@ -8,6 +8,8 @@ import { fileURLToPath } from 'url';
 import { WebSocketServer, WebSocket } from 'ws';
 import mqtt from 'mqtt';
 import eWeLink from 'ewelink-api-next';
+// Импортируем Gpio для работы с пинами
+import { Gpio } from 'onoff';
 
 // Получаем __dirname для ES-модулей
 const __filename = fileURLToPath(import.meta.url);
@@ -25,23 +27,26 @@ const MQTT_TOPIC_SONOFF = 'sonoff4ch';
 const MQTT_TOPIC_RGB = 'rgb_strip';
 const MQTT_TOPIC_LOCK = 'smart_lock';
 
-// --- Конфигурация eWeLink (НОВЫЕ КЛЮЧИ) ---
-const EWELINK_APP_ID = process.env.EWELINK_APP_ID || 'ВАШ_APP_ID';
-const EWELINK_APP_SECRET = process.env.EWELINK_APP_SECRET || 'ВАШ_APP_SECRET';
+// --- Конфигурация eWeLink ---
+const EWELINK_APP_ID = process.env.EWELINK_APP_ID || '7brXbp7Vi3AcxOIUQjB4gdITbinOjbId';
+const EWELINK_APP_SECRET = process.env.EWELINK_APP_SECRET || 'Kh6th5xrkBgAgI5Jj17TBn9R3WjAE7CF';
 const EWELINK_REGION = process.env.EWELINK_REGION || 'eu';
-const EWELINK_ACCOUNT = process.env.EWELINK_EMAIL; // Email от аккаунта eWeLink
-const EWELINK_PASSWORD = process.env.EWELINK_PASSWORD; // Пароль от аккаунта eWeLink
-const EWELINK_AREA_CODE = process.env.EWELINK_AREA_CODE || '+7'; // Ваш код страны
+const EWELINK_ACCOUNT = process.env.EWELINK_EMAIL;
+const EWELINK_PASSWORD = process.env.EWELINK_PASSWORD;
+const EWELINK_AREA_CODE = process.env.EWELINK_AREA_CODE || '+372';
 
-// Создаем экземпляр клиента eWeLink
+// --- Конфигурация GPIO (Распиновка) ---
+// ВНИМАНИЕ: Замените номера пинов на те, к которым вы физически подключили датчики!
+const PIN_MOTION = 17; // GPIO 17 (физический пин 11)
+const PIN_LIGHT = 27;  // GPIO 27 (физический пин 13)
+
 const ewelinkClient = new eWeLink.WebAPI({
     appId: EWELINK_APP_ID,
     appSecret: EWELINK_APP_SECRET,
     region: EWELINK_REGION,
-    logObj: eWeLink.createLogger('eu') // Логирование для отладки
+    logObj: eWeLink.createLogger('eu')
 });
 
-// --- Express middleware ---
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 
@@ -49,6 +54,7 @@ app.use(express.json());
 const systemState = {
     temperature: 24.5,
     motion: false,
+    light: false, // Новое поле для освещенности
     smoke: false,
     door: false,
     lock: false,
@@ -61,6 +67,45 @@ const systemState = {
     haBridgeStatus: 'Ready',
     lastUpdate: Date.now(),
 };
+
+// --- Инициализация GPIO ---
+let motionSensor;
+let lightSensor;
+
+try {
+    // Настраиваем датчик движения на чтение (in). 'both' означает срабатывание и на открытие, и на закрытие
+    motionSensor = new Gpio(PIN_MOTION, 'in', 'both');
+    
+    // Настраиваем датчик света
+    lightSensor = new Gpio(PIN_LIGHT, 'in', 'both');
+
+    console.log(`[GPIO] Датчики инициализированы на пинах ${PIN_MOTION} и ${PIN_LIGHT}`);
+
+    // Обработчик для датчика движения
+    motionSensor.watch((err, value) => {
+        if (err) return console.error('[GPIO] Ошибка датчика движения:', err);
+        const isMotion = value === 1; // 1 = движение есть, 0 = нет
+        if (systemState.motion !== isMotion) {
+            systemState.motion = isMotion;
+            console.log(`[GPIO] Датчик движения: ${isMotion ? 'ДВИЖЕНИЕ' : 'ПОКОЙ'}`);
+            broadcastState();
+        }
+    });
+
+    // Обработчик для датчика освещенности
+    lightSensor.watch((err, value) => {
+        if (err) return console.error('[GPIO] Ошибка датчика света:', err);
+        const isLight = value === 1; // Зависит от модуля (иногда 0 = светло, 1 = темно)
+        if (systemState.light !== isLight) {
+            systemState.light = isLight;
+            console.log(`[GPIO] Датчик света: ${isLight ? 'СВЕТЛО' : 'ТЕМНО'}`);
+            broadcastState();
+        }
+    });
+
+} catch (error) {
+    console.error('[GPIO] Не удалось инициализировать GPIO. Проверьте права (sudo) и пины.', error);
+}
 
 // --- MQTT соединение ---
 const mqttClient = mqtt.connect(`mqtt://${MQTT_HOST}:1883`);
@@ -121,7 +166,6 @@ mqttClient.on('error', (err) => {
 async function initEwelink() {
     try {
         console.log('[eWeLink] Попытка входа в аккаунт...');
-        // Авторизация с использованием email и пароля
         const loginResponse = await ewelinkClient.user.login({
             account: EWELINK_ACCOUNT,
             password: EWELINK_PASSWORD,
@@ -133,14 +177,12 @@ async function initEwelink() {
         }
         console.log('[eWeLink] Успешный вход. Пользователь:', loginResponse.data.user.email);
 
-        // Создаем WebSocket-клиент для получения событий
         const wsClient = new eWeLink.Ws({
             appId: EWELINK_APP_ID,
             appSecret: EWELINK_APP_SECRET,
             region: EWELINK_REGION
         });
 
-        // Подключаемся к WebSocket
         const ws = await wsClient.Connect.create({
             appId: wsClient.appId,
             at: wsClient.at,
@@ -150,15 +192,12 @@ async function initEwelink() {
 
         console.log('[eWeLink] WebSocket подключен. Ожидание событий...');
 
-        // Обработка входящих сообщений
         ws.on('message', (data) => {
             const msg = JSON.parse(data);
-            // Ищем обновления, связанные с датчиками
             if (msg.action === 'update' && msg.params) {
                 const params = msg.params;
                 let changed = false;
 
-                // Проверяем параметры, характерные для датчика двери (DW2-WIFI)
                 if (params.door !== undefined) {
                     systemState.door = (params.door === 1 || params.door === 'on' || params.door === true);
                     changed = true;
@@ -170,7 +209,6 @@ async function initEwelink() {
                     changed = true;
                 }
 
-                // Обновляем заряд батареи, если он пришел
                 if (params.battery !== undefined) {
                     systemState.battery = params.battery;
                     changed = true;
@@ -185,7 +223,6 @@ async function initEwelink() {
 
     } catch (error) {
         console.error('[eWeLink] Ошибка инициализации:', error.message);
-        // Повторная попытка через 30 секунд
         setTimeout(initEwelink, 30000);
     }
 }
@@ -292,17 +329,12 @@ wss.on('connection', (ws) => {
                     broadcastState();
                     break;
                 }
-                case 'TRIGGER_MOTION':
-                    systemState.motion = true;
-                    broadcastState();
-                    setTimeout(() => { systemState.motion = false; broadcastState(); }, 4000);
-                    break;
-                case 'TRIGGER_SMOKE':
+                case 'TRIGGER_SMOKE': // Оставил симуляцию дыма
                     systemState.smoke = true;
                     broadcastState();
                     setTimeout(() => { systemState.smoke = false; broadcastState(); }, 5000);
                     break;
-                case 'TRIGGER_DOOR':
+                case 'TRIGGER_DOOR': // Оставил симуляцию двери (на всякий случай)
                     systemState.door = !systemState.door;
                     broadcastState();
                     break;
@@ -338,17 +370,31 @@ server.listen(PORT, '0.0.0.0', () => {
         .find((n) => n && n.family === 'IPv4' && !n.internal)?.address;
 
     console.log('==============================================');
-    console.log(`[Server] IoT Dashboard (MQTT + eWeLink) запущен`);
+    console.log(`[Server] IoT Dashboard (MQTT + eWeLink + GPIO) запущен`);
     console.log(`[Server] Local:   http://localhost:${PORT}`);
     if (lanIp) console.log(`[Server] Network: http://${lanIp}:${PORT}`);
     console.log('==============================================');
 
-    // Инициализация eWeLink после запуска сервера
     initEwelink();
 });
 
-// --- Корректное завершение ---
+// --- Очистка пинов при выключении ---
+function cleanupGpio() {
+    try {
+        if (motionSensor) motionSensor.unexport();
+        if (lightSensor) lightSensor.unexport();
+        console.log('[GPIO] Пины освобождены.');
+    } catch (e) {}
+}
+
 process.on('SIGTERM', () => {
     console.log('[Server] SIGTERM, завершение работы...');
+    cleanupGpio();
     server.close(() => process.exit(0));
+});
+
+process.on('SIGINT', () => {
+    console.log('[Server] SIGINT, завершение работы...');
+    cleanupGpio();
+    process.exit(0);
 });
