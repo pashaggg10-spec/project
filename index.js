@@ -3,17 +3,17 @@ import http from 'http';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { WebSocketServer, WebSocket } from 'ws';
 import mqtt from 'mqtt';
 import eWeLink from 'ewelink-api-next';
-import gpiox from '@iiot2k/gpiox';
+import { Gpio } from 'pigpio';
 import dotenv from 'dotenv';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Загружаем настройки из static.env
 dotenv.config({ path: path.resolve(__dirname, 'static.env') });
 
 const app = express();
@@ -32,14 +32,11 @@ const MQTT_TOPIC_LOCK = 'smart_lock';
 const EWELINK_APP_ID = process.env.EWELINK_APP_ID || 'Kh6th5xrkBgAgI5Jj17TBn9R3WjAE7CF';
 const EWELINK_APP_SECRET = process.env.EWELINK_APP_SECRET || '7brXbp7Vi3AcxOIUQjB4gdITbinOjbId';
 const EWELINK_REGION = process.env.EWELINK_REGION || 'eu';
-
-// Используем localhost для редиректа
 const EWELINK_REDIRECT_URL = `http://localhost:${PORT}/oauth/callback`;
 
 // --- Конфигурация GPIO ---
 const PIN_MOTION = 17; 
 const PIN_LIGHT = 27;  
-const GPIO_CHIP = 0; 
 
 const ewelinkClient = new eWeLink.WebAPI({
     appId: EWELINK_APP_ID,
@@ -69,30 +66,38 @@ const systemState = {
     lastUpdate: Date.now(),
 };
 
-// --- Инициализация GPIO ---
+// --- Инициализация GPIO (через pigpio) ---
 function initGpio() {
-    console.log(`[GPIO] Инициализация на чипе ${GPIO_CHIP}...`);
-    const mode = gpiox.GPIO_MODE_INPUT_PULLDOWN;
-    const edge = gpiox.GPIO_EDGE_BOTH;
+    console.log('[GPIO] Инициализация датчиков через pigpio...');
 
-    if (!gpiox.init_gpio(PIN_MOTION, mode, GPIO_CHIP)) {
-        console.error(`[GPIO] Ошибка инициализации пина ${PIN_MOTION}: ${gpiox.error_text()}`);
-    } else {
-        gpiox.watch_gpio(PIN_MOTION, mode, GPIO_CHIP, edge, (state) => {
-            systemState.motion = (state === 1);
-            console.log(`[GPIO] Движение: ${systemState.motion ? 'ЕСТЬ' : 'НЕТ'}`);
+    try {
+        const motionSensor = new Gpio(PIN_MOTION, {
+            mode: Gpio.INPUT,
+            pullUpDown: Gpio.PUD_DOWN,
+            edge: Gpio.EITHER_EDGE
+        });
+
+        motionSensor.on('interrupt', (level) => {
+            systemState.motion = (level === 1);
+            console.log(`[GPIO] Датчик движения: ${systemState.motion ? 'ДВИЖЕНИЕ' : 'ПОКОЙ'}`);
             broadcastState();
         });
-    }
 
-    if (!gpiox.init_gpio(PIN_LIGHT, mode, GPIO_CHIP)) {
-        console.error(`[GPIO] Ошибка инициализации пина ${PIN_LIGHT}: ${gpiox.error_text()}`);
-    } else {
-        gpiox.watch_gpio(PIN_LIGHT, mode, GPIO_CHIP, edge, (state) => {
-            systemState.light = (state === 1);
-            console.log(`[GPIO] Свет: ${systemState.light ? 'СВЕТЛО' : 'ТЕМНО'}`);
+        const lightSensor = new Gpio(PIN_LIGHT, {
+            mode: Gpio.INPUT,
+            pullUpDown: Gpio.PUD_DOWN,
+            edge: Gpio.EITHER_EDGE
+        });
+
+        lightSensor.on('interrupt', (level) => {
+            systemState.light = (level === 1);
+            console.log(`[GPIO] Датчик света: ${systemState.light ? 'СВЕТЛО' : 'ТЕМНО'}`);
             broadcastState();
         });
+
+        console.log('[GPIO] Датчики успешно инициализированы!');
+    } catch (err) {
+        console.error('[GPIO] Критическая ошибка инициализации:', err.message);
     }
 }
 
@@ -160,22 +165,37 @@ app.get('/oauth/callback', async (req, res) => {
     }
 
     try {
-        console.log('[eWeLink] Получен код авторизации! Обмен на токен через прямой запрос...');
+        console.log('[eWeLink] Получен код авторизации! Обмен на токен...');
         
-        // Прямой запрос к API eWeLink (обходим баг библиотеки)
-        const response = await fetch('https://api.coolkit.cc/v2/user/oauth/token', {
+        const body = {
+            clientId: EWELINK_APP_ID,
+            clientSecret: EWELINK_APP_SECRET,
+            grantType: 'authorization_code',
+            code: code,
+            redirectUrl: EWELINK_REDIRECT_URL
+        };
+        const bodyString = JSON.stringify(body);
+        const sign = crypto
+            .createHmac('sha256', EWELINK_APP_SECRET)
+            .update(bodyString)
+            .digest('base64');
+        
+        const response = await fetch('https://eu-apia.coolkit.cc/v2/user/oauth/token', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                clientId: EWELINK_APP_ID,
-                clientSecret: EWELINK_APP_SECRET,
-                grantType: 'authorization_code',
-                code: code,
-                redirectUrl: EWELINK_REDIRECT_URL
-            })
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Sign ${sign}`
+            },
+            body: bodyString
         });
 
-        const tokenData = await response.json();
+        const responseText = await response.text();
+        let tokenData;
+        try {
+            tokenData = JSON.parse(responseText);
+        } catch (e) {
+            throw new Error(`Сервер eWeLink вернул не JSON: ${responseText.substring(0, 200)}...`);
+        }
 
         if (tokenData.error !== 0) {
             throw new Error(`Ошибка API eWeLink: ${JSON.stringify(tokenData)}`);
@@ -183,7 +203,6 @@ app.get('/oauth/callback', async (req, res) => {
         
         console.log('[eWeLink] Успешный вход! Токен получен.');
         
-        // Передаем полученные данные в функцию подключения WebSocket
         await connectEwelinkWebSocket(tokenData.data);
 
         res.send('<h1>Успешно!</h1><p>Авторизация eWeLink завершена. Можете закрыть эту вкладку и вернуться в дашборд.</p>');
@@ -201,7 +220,6 @@ async function connectEwelinkWebSocket(tokenData) {
         region: EWELINK_REGION
     });
 
-    // В OAuth v2 API ключи могут отличаться от старого логина
     const ws = await wsClient.Connect.create({
         appId: EWELINK_APP_ID,
         at: tokenData.at,
@@ -217,26 +235,13 @@ async function connectEwelinkWebSocket(tokenData) {
             const params = msg.params;
             let changed = false;
 
-            if (params.door !== undefined) {
-                systemState.door = (params.door === 1 || params.door === 'on');
-                changed = true;
-            } else if (params.contact !== undefined) {
-                systemState.door = (params.contact === 1 || params.contact === 'on');
-                changed = true;
-            }
+            if (params.door !== undefined) { systemState.door = (params.door === 1 || params.door === 'on'); changed = true; }
+            else if (params.contact !== undefined) { systemState.door = (params.contact === 1 || params.contact === 'on'); changed = true; }
 
-            if (params.temperature !== undefined) {
-                systemState.temperature = params.temperature;
-                changed = true;
-            } else if (params.currentTemperature !== undefined) {
-                systemState.temperature = params.currentTemperature;
-                changed = true;
-            }
+            if (params.temperature !== undefined) { systemState.temperature = params.temperature; changed = true; }
+            else if (params.currentTemperature !== undefined) { systemState.temperature = params.currentTemperature; changed = true; }
 
-            if (params.battery !== undefined) {
-                systemState.battery = params.battery;
-                changed = true;
-            }
+            if (params.battery !== undefined) { systemState.battery = params.battery; changed = true; }
 
             if (changed) {
                 console.log('[eWeLink] Обновление:', params);
@@ -328,10 +333,14 @@ server.listen(PORT, '0.0.0.0', () => {
     generateLoginUrl(); 
 });
 
+// --- Очистка ---
 function cleanupGpio() {
     try {
-        gpiox.deinit_gpio(PIN_MOTION);
-        gpiox.deinit_gpio(PIN_LIGHT);
+        const motionSensor = new Gpio(PIN_MOTION, { mode: Gpio.INPUT });
+        const lightSensor = new Gpio(PIN_LIGHT, { mode: Gpio.INPUT });
+        motionSensor.disableInterrupt();
+        lightSensor.disableInterrupt();
+        console.log('[GPIO] Пины освобождены.');
     } catch (e) {}
 }
 
