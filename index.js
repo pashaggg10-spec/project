@@ -25,7 +25,11 @@ const MQTT_TOPIC_SONOFF = 'sonoff4ch';
 const MQTT_TOPIC_RGB = 'rgb_strip';
 const MQTT_TOPIC_LOCK = 'smart_lock';
 
-// --- Конфигурация eWeLink (Классический вход) ---
+// --- Конфигурация eWeLink ---
+// Берем ключи, которые вы прислали с сайта
+const EWELINK_APP_ID = 'Kh6th5xrkBgAgI5Jj17TBn9R3WjAE7CF';
+const EWELINK_APP_SECRET = '7brXbp7Vi3AcxOIUQjB4gdITbinOjbId';
+
 const EWELINK_EMAIL = process.env.EWELINK_EMAIL;
 const EWELINK_PASSWORD = process.env.EWELINK_PASSWORD;
 const EWELINK_REGION = process.env.EWELINK_REGION || 'eu';
@@ -34,10 +38,12 @@ const EWELINK_AREA_CODE = process.env.EWELINK_AREA_CODE || '+372';
 // --- Конфигурация GPIO ---
 const PIN_MOTION = 17; 
 const PIN_LIGHT = 27;  
-const GPIO_CHIP = 512; // Используем чип 512
+const GPIO_CHIP = 512; // Указываем чип 512, который есть в вашей системе
 
-// Инициализация клиента eWeLink
+// Инициализация клиента eWeLink С КЛЮЧАМИ (чтобы убрать ошибку indexOf)
 const ewelinkClient = new eWeLink.WebAPI({
+    appId: EWELINK_APP_ID,
+    appSecret: EWELINK_APP_SECRET,
     region: EWELINK_REGION,
     logObj: eWeLink.createLogger(EWELINK_REGION)
 });
@@ -47,11 +53,11 @@ app.use(express.json());
 
 // --- Состояние системы ---
 const systemState = {
-    temperature: '--', // Теперь будет обновляться из eWeLink
-    motion: false,     // GPIO
-    light: false,      // GPIO
-    smoke: false,      // Симуляция
-    door: false,       // eWeLink
+    temperature: '--', 
+    motion: false,     
+    light: false,      
+    smoke: false,      
+    door: false,       
     lock: false,
     battery: 85,
     lamp1: false,
@@ -69,6 +75,7 @@ function initGpio() {
     const mode = gpiox.GPIO_MODE_INPUT_PULLDOWN;
     const edge = gpiox.GPIO_EDGE_BOTH;
 
+    // Передаем GPIO_CHIP (512) вместо дефолтного 0
     if (!gpiox.init_gpio(PIN_MOTION, mode, GPIO_CHIP)) {
         console.error(`[GPIO] Ошибка инициализации пина ${PIN_MOTION}: ${gpiox.error_text()}`);
     } else {
@@ -125,7 +132,7 @@ mqttClient.on('message', (topic, message) => {
 
 mqttClient.on('error', (err) => console.error('[MQTT] Ошибка:', err.message));
 
-// --- Интеграция с eWeLink (Классический вход) ---
+// --- Интеграция с eWeLink ---
 async function initEwelink() {
     try {
         console.log('[eWeLink] Попытка входа по Email...');
@@ -145,9 +152,8 @@ async function initEwelink() {
             region: EWELINK_REGION
         });
         
-        // Подключаем WebSocket (используя токен из логина)
         const ws = await wsClient.Connect.create({
-            appId: loginResponse.data.appId || undefined,
+            appId: EWELINK_APP_ID,
             at: loginResponse.data.at,
             region: EWELINK_REGION,
             userApiKey: loginResponse.data.userApiKey
@@ -157,13 +163,11 @@ async function initEwelink() {
 
         ws.on('message', (data) => {
             const msg = JSON.parse(data);
-            
-            // Обработка обновлений от устройств
             if (msg.action === 'update' && msg.params) {
                 const params = msg.params;
                 let changed = false;
 
-                // Датчик двери (DW2-WIFI)
+                // Датчик двери
                 if (params.door !== undefined) {
                     systemState.door = (params.door === 1 || params.door === 'on');
                     changed = true;
@@ -172,7 +176,7 @@ async function initEwelink() {
                     changed = true;
                 }
 
-                // Датчик температуры (если приходит)
+                // Датчик температуры
                 if (params.temperature !== undefined) {
                     systemState.temperature = params.temperature;
                     changed = true;
@@ -181,7 +185,6 @@ async function initEwelink() {
                     changed = true;
                 }
 
-                // Батарейка
                 if (params.battery !== undefined) {
                     systemState.battery = params.battery;
                     changed = true;
@@ -196,7 +199,7 @@ async function initEwelink() {
 
     } catch (error) {
         console.error('[eWeLink] Ошибка инициализации:', error.message);
-        setTimeout(initEwelink, 30000); // Повтор через 30 сек
+        setTimeout(initEwelink, 30000); 
     }
 }
 
